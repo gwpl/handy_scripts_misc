@@ -1,0 +1,71 @@
+#!/bin/bash
+
+# Thanks to LLM handy script automating keeping clones or repositories
+# organised:
+# $HOME/$server/$username/$repo
+#
+# Usage:
+# repo-clone ssh git@...sssh path
+# repo-clone https https://...
+# repo-clone https://...
+# Works with gitlab, github or custom gitlab servers.
+
+
+# Define the function to get the hosting shortcode, username, and repository name
+parse_git_url() {
+    url="$1"
+    url="${url#http://}"
+    url="${url#https://}"
+    url="${url#git@}"
+    url="${url%.git}"
+
+    if [[ "$url" =~ ":" ]]; then
+        IFS=':' read -r -a array <<< "$url"
+        git_hosting="${array[0]}"
+        IFS='/' read -r -a array <<< "${array[1]}"
+    else
+        IFS='/' read -r -a array <<< "$url"
+        git_hosting="${array[0]}"
+    fi
+
+    hosting_shortcode="${git_hosting%%.*}"
+    username="${array[0]}"
+    repo="${array[1]}"
+
+    echo "$hosting_shortcode" "$git_hosting" "$username" "$repo"
+}
+
+# Define the function to create the directory and clone the repository
+clone_repo() {
+    hosting_shortcode="$1"
+    username="$2"
+    repo="$3"
+    clone_url="$4"
+
+    set -x
+    mkdir -p "$HOME/$hosting_shortcode/$username"
+    cd "$HOME/$hosting_shortcode/$username"
+    git clone "$clone_url"
+}
+
+# Check if the first argument is ssh or https
+if [[ "$1" == "ssh" ]] || [[ "$1" == "https" ]]; then
+    protocol="$1"
+    shift
+else
+    protocol="https"
+fi
+
+# Parse the git url
+read -r hosting_shortcode git_hosting username repo <<< "$(parse_git_url "$1")"
+
+# Create the clone url
+if [[ "$protocol" == "ssh" ]]; then
+    clone_url="git@$git_hosting:$username/$repo.git"
+else
+    clone_url="https://$git_hosting/$username/$repo.git"
+fi
+
+# Clone the repository
+clone_repo "$hosting_shortcode" "$username" "$repo" "$clone_url"
+
