@@ -8,8 +8,38 @@
 # repo-clone git@server:username/reponame  # for ssh
 # repo-clone https://server/username/reponame.git  # for https
 # repo-clone https://server/username/reponame # for project url
+#
 # Works with gitlab, github or custom gitlab servers.
+#
+# Also, special handing for huggingface models:
+# repo-clone https://huggingface.co/TheBloke/wizard-mega-13B-GPTQ  #you can give just project page of model
 
+
+# Function to check if the url is from huggingface.co
+is_it_huggingface() {
+    url="$1"
+    [[ "$url" == "https://huggingface.co/"* ]]
+}
+
+# Function to clone the huggingface repository
+clone_huggingface() {
+    url="$1"
+    url="${url#https://huggingface.co/}"
+    IFS='/' read -r -a array <<< "$url"
+    username="${array[0]}"
+    repo="${array[1]%.git}"
+
+    set -x
+    mkdir -p "$HOME/huggingface.co/${username}" && cd "$HOME/huggingface.co/${username}" && git lfs install && git clone "https://huggingface.co/${username}/${repo}"
+}
+
+# Check if the url is from huggingface.co
+if is_it_huggingface "$1"; then
+    clone_huggingface "$1"
+    exit
+fi
+
+# Now let's take care of all other cases
 
 # Function to parse the git url and return hosting shortcode, git hosting, username, and repository name
 parse_git_url() {
