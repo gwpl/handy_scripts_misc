@@ -1,0 +1,48 @@
+#!/bin/bash
+
+# json_outline - A tool to display JSON structure without values
+# Usage: json_outline [file] or cat file.json | json_outline
+#
+#
+# Handy tool to have a quick look at json outline, 
+# good if you have json with long strings, to look on keys structure first.
+#
+# can take filename as parameter or stdin.
+#
+# example:
+#
+# ```
+# $ echo '{"code": 200, "data": {"title": "Test", "nested": {"value": 123}}}' |
+#  ./json_outline
+# {
+#   "code": ...
+#   "data": {
+#     "title": ...
+#     "nested": {
+#       "value": ...
+#     }
+#   }
+# }
+# ```
+
+# Check if jq is installed
+if ! command -v jq &> /dev/null; then
+    echo "Error: jq is not installed. Please install it first."
+    echo "On Debian/Ubuntu: sudo apt install jq"
+    echo "On Fedora/RHEL: sudo dnf install jq"
+    echo "On Arch Linux: sudo pacman -S jq"
+    exit 1
+fi
+
+# Process input (either file or stdin)
+if [ $# -eq 1 ]; then
+    # Input from file
+    if [ ! -f "$1" ]; then
+        echo "Error: File '$1' not found."
+        exit 1
+    fi
+    jq -r . "$1" | sed 's/: \([^{[].*\)/: .../g'
+else
+    # Input from stdin
+    jq -r . | sed 's/: \([^{[].*\)/: .../g'
+fi
