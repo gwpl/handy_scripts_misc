@@ -9,12 +9,15 @@ It performs the following functions:
   - Automatically appends a "source <remote_file>" command to the detected profile if it is not already present.
   - Supports a verbosity flag (-v/--verbose) for detailed logging of executed commands.
   - Forwards any additional arguments after the local file and target to the SSH/SCP commands so that custom SSH options can be used.
+  - Optionally skips SSH host key checking if -k/--skip-host-key-check is specified.
 
 Usage Example:
-    envsync [-v|--verbose] local_file user@server:remote_file [ssh_options...]
+    envsync [-v|--verbose] [-k|--skip-host-key-check] local_file user@server:remote_file [ssh_options...]
 
 Arguments:
     -v, --verbose       Enable verbose logging.
+    -k, --skip-host-key-check
+                        Skip SSH host key checking (adds "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null")
     local_file          Local environment file to copy.
     user@server:remote_file
                         Target SSH destination and remote file path.
@@ -111,6 +114,11 @@ def main():
                     "This tool uses system SSH and SCP commands."
     )
     parser.add_argument("-v", "--verbose", action="store_true", help="Enable verbose logging.")
+    parser.add_argument(
+        "-k", "--skip-host-key-check",
+        action="store_true",
+        help="Skip SSH host key checking (adds -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null)"
+    )
     parser.add_argument("local_file", help="Local file to copy (e.g., ~/.config/stow/magic/magic_vars)")
     parser.add_argument("target", help="Remote target in the format user@server:remote_file")
     parser.add_argument("ssh_options", nargs=argparse.REMAINDER, help="Additional options to pass to ssh/scp commands")
@@ -119,6 +127,13 @@ def main():
     # Set global verbosity flag
     global VERBOSE
     VERBOSE = args.verbose
+
+    # If skip-host-key-check is set, prepend the corresponding SSH options
+    if args.skip_host_key_check:
+        args.ssh_options.insert(0, "-o")
+        args.ssh_options.insert(1, "StrictHostKeyChecking=no")
+        args.ssh_options.insert(2, "-o")
+        args.ssh_options.insert(3, "UserKnownHostsFile=/dev/null")
 
     try:
         user, server, remote_file = parse_ssh_target(args.target)
@@ -142,4 +157,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
