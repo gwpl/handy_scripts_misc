@@ -75,9 +75,24 @@ clone_repo() {
     clone_url="$4"
 
     set -x
-    mkdir -p "$HOME/$hosting_shortcode/$username"
-    cd "$HOME/$hosting_shortcode/$username"
-    git clone "$clone_url"
+    local repo_path="$HOME/$hosting_shortcode/$username/$repo"
+
+    if [ -d "$repo_path" ]; then
+        # If repository already exists, let's fetch and optionally pull
+        cd "$repo_path"
+        git fetch
+        local changes
+        changes="$(git status --porcelain)"
+        if [ -z "$changes" ]; then
+            git pull
+        else
+            echo "Local changes found. Please commit or stash them before pulling."
+        fi
+    else
+        mkdir -p "$HOME/$hosting_shortcode/$username"
+        cd "$HOME/$hosting_shortcode/$username"
+        git clone "$clone_url"
+    fi
 }
 
 # Parse the git url
@@ -92,4 +107,3 @@ fi
 
 # Clone the repository
 clone_repo "$hosting_shortcode" "$username" "$repo" "$clone_url"
-
