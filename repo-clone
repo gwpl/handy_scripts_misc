@@ -1,50 +1,47 @@
 #!/bin/bash
-
-# Thanks to LLM handy script automating keeping clones or repositories
-# organised:
-# $HOME/$server_shortcode/$username/$repo
+# **Repo Clone Tool**
 #
-# Usage:
-# repo-clone git@server:username/reponame  # for ssh
-# repo-clone https://server/username/reponame.git  # for https
-# repo-clone https://server/username/reponame # for project url
+# *Usage*: `./repo-clone <url>`
 #
-# Works with gitlab, github or custom gitlab servers.
+# This script can be *sourced* or *executed* directly.
 #
-# Also, special handing for huggingface models:
-# repo-clone https://huggingface.co/TheBloke/wizard-mega-13B-GPTQ  #you can give just project page of model
-
+# Examples:
+#   repo-clone git@server:username/reponame
+#   repo-clone https://server/username/reponame.git
+#   repo-clone https://server/username/reponame
+#   repo-clone https://huggingface.co/TheBloke/wizard-mega-13B-GPTQ
+#
+# When sourced, call the function:
+#   repo_clone <url>
 
 # Function to check if the url is from huggingface.co
 is_it_huggingface() {
-    url="$1"
+    local url="$1"
     [[ "$url" == "https://huggingface.co/"* ]]
 }
 
 # Function to clone the huggingface repository
 clone_huggingface() {
-    url="$1"
+    local url="$1"
+    # Remove leading https://huggingface.co/
     url="${url#https://huggingface.co/}"
     IFS='/' read -r -a array <<< "$url"
-    username="${array[0]}"
-    repo="${array[1]%.git}"
+    local username="${array[0]}"
+    local repo="${array[1]%.git}"
 
     set -x
-    mkdir -p "$HOME/huggingface.co/${username}" && cd "$HOME/huggingface.co/${username}" && git lfs install && git clone "https://huggingface.co/${username}/${repo}"
+    mkdir -p "$HOME/huggingface.co/${username}" && cd "$HOME/huggingface.co/${username}" && git lfs install && \
+        git clone "https://huggingface.co/${username}/${repo}"
 }
-
-# Check if the url is from huggingface.co
-if is_it_huggingface "$1"; then
-    clone_huggingface "$1"
-    exit
-fi
-
-# Now let's take care of all other cases
 
 # Function to parse the git url and return hosting shortcode, git hosting, username, and repository name
 parse_git_url() {
-    url="$1"
-    is_ssh=false
+    local url="$1"
+    local is_ssh=false
+    local git_hosting
+    local hosting_shortcode
+    local username
+    local repo
 
     # Check if the URL has the SSH format
     if [[ "$url" =~ "@" ]]; then
@@ -67,12 +64,12 @@ parse_git_url() {
     echo "$hosting_shortcode" "$git_hosting" "$username" "$repo" "$is_ssh"
 }
 
-# Function to create the directory and clone the repository
+# Function to create/update the directory and clone or pull the repository
 clone_repo() {
-    hosting_shortcode="$1"
-    username="$2"
-    repo="$3"
-    clone_url="$4"
+    local hosting_shortcode="$1"
+    local username="$2"
+    local repo="$3"
+    local clone_url="$4"
 
     set -x
     local repo_path="$HOME/$hosting_shortcode/$username/$repo"
@@ -95,15 +92,39 @@ clone_repo() {
     fi
 }
 
-# Parse the git url
-read -r hosting_shortcode git_hosting username repo is_ssh <<< "$(parse_git_url "$1")"
+# The core function that can be called when the script is sourced
+repo_clone() {
+    # Check if the url is from huggingface.co
+    if is_it_huggingface "$1"; then
+        clone_huggingface "$1"
+        return
+    fi
 
-# Create the clone url
-if [[ "$is_ssh" = "true" ]]; then
-    clone_url="git@$git_hosting:$username/$repo.git"
-else
-    clone_url="https://$git_hosting/$username/$repo.git"
+    # Otherwise, parse the git url
+    read -r hosting_shortcode git_hosting username repo is_ssh <<< "$(parse_git_url "$1")"
+
+    # Create the clone url
+    local clone_url
+    if [[ "$is_ssh" = "true" ]]; then
+        clone_url="git@$git_hosting:$username/$repo.git"
+    else
+        clone_url="https://$git_hosting/$username/$repo.git"
+    fi
+
+    # Clone the repository
+    clone_repo "$hosting_shortcode" "$username" "$repo" "$clone_url"
+}
+
+# Main entry point (only invokes the function if executed directly)
+main() {
+    if [[ -z "$1" ]]; then
+        echo "Usage: repo-clone <url>"
+        return 1
+    fi
+    repo_clone "$@"
+}
+
+# Check if the script is being sourced or executed
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main "$@"
 fi
-
-# Clone the repository
-clone_repo "$hosting_shortcode" "$username" "$repo" "$clone_url"
