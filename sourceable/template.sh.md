@@ -1,90 +1,66 @@
-To create a minimal example script that can be both sourced and executed, while providing functionality like entering a Docker container with user credentials, let's deconstruct the script and use comments for clarification. This approach allows it to be used both as a library (by sourcing it) and as a standalone tool (by executing it).
+To create a minimal example script that can be both *sourced* and *executed*, follow this template. It allows usage as a library (by sourcing) or as a standalone tool (by executing).
 
-### Script Breakdown
+### Key Concepts
 
 1. **Function Definition**:
-    - The script primarily revolves around the `docker_run_with_dir` function, which sets up a Docker container environment that mimics the user's credentials and directory setup on their host machine.
-    
-2. **Detecting Script Usage**:
-    - The script uses `BASH_SOURCE` to check whether it is being executed directly or sourced into another script.
+    - The script centers around the `example_tool` function, which performs a generic task.
+
+2. **Usage Detection**:
+    - Uses `BASH_SOURCE` to determine if the script is executed directly or sourced.
 
 3. **Main Function**:
-    - A `main` function is defined and called only if the script is executed directly. This encapsulation allows for additional functionality if sourced, such as using functions separately.
+    - The `main` function is invoked only when executed directly, enabling additional functionality when sourced.
 
-Here is a minimal example script template:
+### Example Script Template
 
 ```bash
 #!/bin/bash
-# **Docker Environment Setup**
+# **Example Tool**
 #
-# "Usage: ./docker_script.sh <directory> [ro|rw] [image=ubuntu:latest]"
+# *Usage*: `./example_tool.sh <arg1> [arg2]`
 #
-# This script can be sourced or executed directly
+# This script can be *sourced* or *executed* directly
 
-docker_run_with_dir() {
-    local dir="$1" mode="${2:-ro}" image="${3:-ubuntu:latest}"
+example_tool() {
+    local arg1="$1" arg2="${2:-default}"
 
-    if [[ -z "$dir" || ! -d "$dir" ]]; then
-        echo "Usage: docker_run_with_dir <directory> [ro|rw] [image=$image]" >&2
+    if [[ -z "$arg1" ]]; then
+        echo "Usage: example_tool <arg1> [arg2]" >&2
         return 1
     fi
 
-    local uid=$(id -u)
-    local gid=$(id -g)
-    local username=$(id -un)
-    local groupname=$(getent group "$gid" | cut -d: -f1)
-    local temp_dir=$(mktemp -d)
-
-    trap 'rm -rf "$temp_dir"' EXIT
-
-    local homedir_inside='/tmp/home'
-
-    # Prepare minimal user credential files for inside Docker
-    cat > "${temp_dir}/passwd" <<EOF
-root:x:0:0:root:/root:/bin/bash
-${username}:x:${uid}:${gid}:,,${homedir_inside}:/data:/bin/bash
-EOF
-
-    cat > "${temp_dir}/group" <<EOF
-root:x:0:
-${groupname}:x:${gid}:
-EOF
-
-    # Execute Docker run with custom settings
-    docker run -it --rm \
-        -v "$dir":/data:"$mode" \
-        -v "${temp_dir}/passwd":/etc/passwd:ro \
-        -v "${temp_dir}/group":/etc/group:ro \
-        -w /data \
-        -u "${uid}:${gid}" \
-        "$image" \
-        bash -c "mkdir -p ${homedir_inside} && exec bash"
+    # Example operation
+    echo "Running example_tool with arg1: $arg1 and arg2: $arg2"
 }
 
 # Main entry point
 main() {
-    docker_run_with_dir "$@"
+    example_tool "$@"
 }
 
-# Check whether the script is being sourced or executed
+# Check if the script is being sourced or executed
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     main "$@"
 fi
 ```
 
-### Explanation
+### Usage
 
-- **Functionality**: 
-  - The `docker_run_with_dir` function takes a directory, access mode (`ro` or `rw`), and an optional Docker image name. It sets up Docker with the user's credentials and mounts the specified directory.
-  
-- **Credential Files**:
-  - Creates minimal `/etc/passwd` and `/etc/group` files for the Docker environment to reflect the current user's identity and groups.
+- **Sourcing**: 
+  - Source the script to use `example_tool` in other scripts or the shell:  
+    ```bash
+    source example_tool.sh
+    example_tool arg1 arg2
+    ```
 
-- **Cleanup**:
-  - Uses `mktemp` to create a temporary directory for credentials and ensures cleanup with `trap`.
+- **Direct Execution**:
+  - Run the script directly:  
+    ```bash
+    ./example_tool.sh arg1 arg2
+    ```
 
-- **Execution Handling**:
-  - The `main` function is invoked only if the script is executed (`BASH_SOURCE[0]` will be the script name when executed and not when sourced).
-  
-By following this template, you have a script that easily adapts to be part of larger systems or act as a standalone utility while using Docker securely.
+### Integration
+
+- **Modular Architecture**:
+  - This script fits into a modular sourcing architecture, allowing individual sourcing or execution. Use `all.sh` to source all scripts in the directory, as detailed in `ABOUT_SOURCABLE.md`.
 
