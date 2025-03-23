@@ -281,7 +281,7 @@ def main():
     )
     parser.add_argument("-v", "--verbose", action="count", default=0,
                         help="Increase verbosity. Multiple -v options increase verbosity.")
-    parser.add_argument("--hosts-path", default=DEFAULT_HOSTS_PATH,
+    parser.add_argument("-f", "--hosts-path", default=DEFAULT_HOSTS_PATH,
                         help="Path to the /etc/hosts file. Default is /etc/hosts.")
     parser.add_argument("-M", "--marker", default=DEFAULT_MARKER,
                         help="Marker text used to identify lines managed by this tool. "
