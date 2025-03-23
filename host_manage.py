@@ -254,12 +254,16 @@ def list_entries(lines_data, marker, output_json=False):
     if output_json:
         print(json.dumps(managed, indent=2))
     else:
-        for entry in managed:
-            if entry["disabled"]:
-                status = "(disabled)"
-            else:
-                status = "(enabled)"
-            print(f"{entry['ip']} {entry['hostname']} {entry['comment_or_marker']} {status}")
+        disabled_entries = [entry for entry in managed if entry["disabled"]]
+        enabled_entries = [entry for entry in managed if not entry["disabled"]]
+
+        print("## Disabled lines:")
+        for entry in disabled_entries:
+            print(f"{entry['ip']} {entry['hostname']} {entry['comment_or_marker']} (disabled)")
+
+        print("\n## Enabled lines:")
+        for entry in enabled_entries:
+            print(f"{entry['ip']} {entry['hostname']} {entry['comment_or_marker']} (enabled)")
 
 def main():
     global VERBOSITY_LEVEL
