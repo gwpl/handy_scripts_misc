@@ -26,6 +26,8 @@ import sys
 import argparse
 import json
 import os
+import subprocess
+import tempfile
 
 DEFAULT_MARKER = "# ManagedByHostsTool"
 DEFAULT_HOSTS_PATH = "/etc/hosts"
@@ -44,10 +46,63 @@ def error_exit(msg, code=1):
     print(f"ERROR: {msg}", file=sys.stderr)
     sys.exit(code)
 
-def parse_hosts(hosts_path):
+def is_ssh_path(path):
     """
-    Parse /etc/hosts into a list of lines and also keep track of
-    which lines are 'active' or commented out, and any trailing text (comments).
+    Naive check if a path looks like 'user@host:/some/path'.
+    We'll look for a '@' and a ':' in the string.
+    """
+    return ('@' in path) and (':' in path)
+
+def parse_ssh_path(path):
+    """
+    Parse an SSH-style path user@host:/remote/path into (user_host, remote_path).
+    If user@ is omitted, we still handle 'host:/remote/path'.
+    """
+    user_host, remote_path = path.split(':', 1)
+    return user_host, remote_path
+
+def read_remote_file(ssh_cmd, ssh_extra_args, user_host, remote_path):
+    """
+    Use ssh to read the remote file and return a list of lines.
+    """
+    cmd = [ssh_cmd] + ssh_extra_args + [user_host, 'cat', remote_path]
+    log_debug(f"Reading remote file with command: {' '.join(cmd)}")
+    try:
+        out = subprocess.check_output(cmd, encoding='utf-8')
+    except subprocess.CalledProcessError as e:
+        error_exit(f"Cannot read remote file: {e}", 1)
+    lines = out.splitlines()
+    return lines
+
+def write_remote_file(ssh_cmd, ssh_extra_args, user_host, remote_path, lines_data):
+    """
+    Use ssh to create a backup of the remote file, then write new content via stdin.
+    """
+    # Create backup on remote
+    cmd_backup = [ssh_cmd] + ssh_extra_args + [
+        user_host,
+        f"cp '{remote_path}' '{remote_path}.bak' 2>/dev/null || true"
+    ]
+    log_debug(f"Backing up remote file with command: {' '.join(cmd_backup)}")
+    try:
+        subprocess.check_call(cmd_backup)
+    except subprocess.CalledProcessError as e:
+        error_exit(f"Failed creating backup on remote: {e}", 1)
+
+    # Write new file content
+    cmd_write = [ssh_cmd] + ssh_extra_args + [user_host, f"cat > '{remote_path}'"]
+    log_debug(f"Writing remote file with command: {' '.join(cmd_write)}")
+    try:
+        proc = subprocess.Popen(cmd_write, stdin=subprocess.PIPE, text=True)
+        proc.communicate("\n".join(lines_data) + "\n")
+        if proc.returncode != 0:
+            error_exit("Failed to write remote file.", proc.returncode)
+    except Exception as e:
+        error_exit(f"Failed to write to remote hosts file: {e}")
+
+def parse_local_file(hosts_path):
+    """
+    Parse /etc/hosts (or local file) into a list of lines.
     """
     if not os.path.exists(hosts_path):
         error_exit(f"Hosts file not found: {hosts_path}")
@@ -56,16 +111,12 @@ def parse_hosts(hosts_path):
     with open(hosts_path, "r", encoding="utf-8") as f:
         for raw_line in f:
             line = raw_line.rstrip('\n')
-            stripped = line.lstrip()
-            # We don't strictly need 'is_commented' here, but let's keep it for reference
-            # in case we need to parse in the future
-            is_commented = stripped.startswith('#')
             lines_data.append(line)
     return lines_data
 
-def write_hosts(hosts_path, lines_data):
+def write_local_file(hosts_path, lines_data):
     """
-    Write the lines back to /etc/hosts.
+    Write lines back to local /etc/hosts (or any local file), creating a backup.
     """
     backup_path = hosts_path + ".bak"
     try:
@@ -84,9 +135,29 @@ def write_hosts(hosts_path, lines_data):
     except Exception as e:
         error_exit(f"Failed to write to {hosts_path}: {e}")
 
+def parse_hosts(hosts_path, ssh_cmd, ssh_extra_args):
+    """
+    Parse the hosts file from either local or remote based on the path format.
+    """
+    if is_ssh_path(hosts_path):
+        user_host, remote_path = parse_ssh_path(hosts_path)
+        return read_remote_file(ssh_cmd, ssh_extra_args, user_host, remote_path)
+    else:
+        return parse_local_file(hosts_path)
+
+def write_hosts(hosts_path, lines_data, ssh_cmd, ssh_extra_args):
+    """
+    Write the hosts file to either local or remote based on the path format.
+    """
+    if is_ssh_path(hosts_path):
+        user_host, remote_path = parse_ssh_path(hosts_path)
+        write_remote_file(ssh_cmd, ssh_extra_args, user_host, remote_path, lines_data)
+    else:
+        write_local_file(hosts_path, lines_data)
+
 def parse_line_components(line):
     """
-    Returns (leading_comment, ip, hostname, comment, marker, is_commented_out).
+    Returns (original_line, ip, hostname, unused, trailing, is_commented_out).
     If line is blank or no IP found, returns placeholders.
     """
     original_line = line
@@ -105,7 +176,6 @@ def parse_line_components(line):
 
     ip_part = parts[0]
     hostname_part = parts[1]
-
     remainder = parts[2:] if len(parts) > 2 else []
     joined_remainder = " ".join(remainder)
     return (original_line, ip_part, hostname_part, "", joined_remainder, is_commented_out)
@@ -270,7 +340,6 @@ def parse_full_line(line):
     ip = parts[0]
     hostname = parts[1]
     comment_parts = parts[2:] if len(parts) > 2 else []
-    # If the user typed '# something', it's already included in comment_parts.
     comment = " ".join(comment_parts)
     return ip, hostname, comment
 
@@ -282,19 +351,25 @@ def main():
     parser.add_argument("-v", "--verbose", action="count", default=0,
                         help="Increase verbosity. Multiple -v options increase verbosity.")
     parser.add_argument("-f", "--hosts-path", default=DEFAULT_HOSTS_PATH,
-                        help="Path to the /etc/hosts file. Default is /etc/hosts.")
+                        help="Local or remote path to the /etc/hosts file. "
+                             "Can be local (e.g. /etc/hosts) "
+                             "or SSH notation (user@host:/etc/hosts).")
     parser.add_argument("-M", "--marker", default=DEFAULT_MARKER,
                         help="Marker text used to identify lines managed by this tool. "
                              "Set to empty string to manage all lines. Default is '# ManagedByHostsTool'.")
     parser.add_argument("-o", "--output", choices=["json"], default=None,
                         help="Output format for the 'list' subcommand. E.g. 'json' for machine parseable output.")
+    # new arguments to specify custom ssh command or extra args:
+    parser.add_argument("--ssh-cmd", default=os.environ.get("SSH_CMD", "ssh"),
+                        help="Specify a custom SSH command (default: 'ssh'). "
+                             "Environment variable SSH_CMD can also be used.")
+    parser.add_argument("--ssh-extra-args", default=None,
+                        help="Extra arguments (space separated) to pass to the SSH command.")
 
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     # add
     parser_add = subparsers.add_parser("add", help="Add a new entry to /etc/hosts.")
-    # Optional short options as requested: -h for IP, -d for hostname
-    # but careful not to override default -h (help). We'll rename the short opts a bit:
     parser_add.add_argument("-i", "--ip", required=False, help="IP address to add.")
     parser_add.add_argument("-d", "--hostname", required=False, help="Hostname to add.")
     parser_add.add_argument("--comment", default="", help="Optional comment for this entry.")
@@ -304,7 +379,6 @@ def main():
 
     # update
     parser_update = subparsers.add_parser("update", help="Update an existing entry or create if not found.")
-    # same pattern for short opts
     parser_update.add_argument("-i", "--ip", required=False, help="IP address to update.")
     parser_update.add_argument("-d", "--hostname", required=False, help="Hostname to update.")
     parser_update.add_argument("--comment", default="", help="Optional comment for this entry.")
@@ -330,10 +404,17 @@ def main():
     args = parser.parse_args()
     VERBOSITY_LEVEL = args.verbose
 
+    # parse ssh extra args
+    ssh_extra_args = []
+    if args.ssh_extra_args:
+        ssh_extra_args = args.ssh_extra_args.split()
+
     command = args.command
     marker = args.marker
     hosts_path = args.hosts_path
-    lines_data = parse_hosts(hosts_path)
+
+    # read lines from local or remote
+    lines_data = parse_hosts(hosts_path, args.ssh_cmd, ssh_extra_args)
 
     if command == "add":
         if args.full_line and (args.ip or args.hostname or args.comment):
@@ -350,13 +431,12 @@ def main():
         else:
             lines_data = add_entry(lines_data, args.ip, args.hostname, args.comment, marker)
 
-        write_hosts(hosts_path, lines_data)
+        write_hosts(hosts_path, lines_data, args.ssh_cmd, ssh_extra_args)
         sys.exit(0)
 
     elif command == "update":
         if args.full_line and (args.ip or args.hostname or args.comment):
             error_exit("Cannot combine --full-line with --ip/--hostname/--comment.", 2)
-
         if not args.full_line and (not args.ip or not args.hostname):
             error_exit("Must provide either --full-line OR both --ip and --hostname.", 2)
 
@@ -369,22 +449,22 @@ def main():
         else:
             lines_data = update_entry(lines_data, args.ip, args.hostname, args.comment, marker)
 
-        write_hosts(hosts_path, lines_data)
+        write_hosts(hosts_path, lines_data, args.ssh_cmd, ssh_extra_args)
         sys.exit(0)
 
     elif command == "disable":
         lines_data = disable_entry(lines_data, args.hostname, marker)
-        write_hosts(hosts_path, lines_data)
+        write_hosts(hosts_path, lines_data, args.ssh_cmd, ssh_extra_args)
         sys.exit(0)
 
     elif command == "enable":
         lines_data = enable_entry(lines_data, args.hostname, marker)
-        write_hosts(hosts_path, lines_data)
+        write_hosts(hosts_path, lines_data, args.ssh_cmd, ssh_extra_args)
         sys.exit(0)
 
     elif command == "delete":
         lines_data = delete_entry(lines_data, args.hostname, marker)
-        write_hosts(hosts_path, lines_data)
+        write_hosts(hosts_path, lines_data, args.ssh_cmd, ssh_extra_args)
         sys.exit(0)
 
     elif command == "list":
