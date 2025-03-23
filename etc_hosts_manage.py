@@ -57,6 +57,8 @@ def parse_hosts(hosts_path):
         for raw_line in f:
             line = raw_line.rstrip('\n')
             stripped = line.lstrip()
+            # We don't strictly need 'is_commented' here, but let's keep it for reference
+            # in case we need to parse in the future
             is_commented = stripped.startswith('#')
             lines_data.append(line)
     return lines_data
@@ -89,10 +91,8 @@ def parse_line_components(line):
     """
     original_line = line
     is_commented_out = False
-    leading_whitespace = len(line) - len(line.lstrip())
     line = line.strip()
     if not line or line.startswith('#'):
-        # commented or blank
         if line.startswith('#'):
             is_commented_out = True
             line = line[1:].strip()
@@ -106,9 +106,7 @@ def parse_line_components(line):
     ip_part = parts[0]
     hostname_part = parts[1]
 
-    # Everything after the second part might be comment, marker, etc.
     remainder = parts[2:] if len(parts) > 2 else []
-    # We'll try to see if the remainder has a marker or comment
     joined_remainder = " ".join(remainder)
     return (original_line, ip_part, hostname_part, "", joined_remainder, is_commented_out)
 
@@ -117,22 +115,12 @@ def build_line(ip, hostname, comment, marker, is_commented_out):
     Construct the line from the components. The comment (if present) is
     placed before the marker. If marker is present and not empty, it is appended.
     """
-    tokens = [ip, hostname]
-    # The user comment is appended as '# usercomment' if provided
-    # But to keep it consistent, we might just keep the raw comment
-    # The marker is appended at the end if not empty.
-
-    # We'll store comment as part of the line if it doesn't contain '#'
-    # Or if it does, we just keep it as is. It's up to the user.
-    line_comment = ""
-    if comment.strip():
-        line_comment = f"{comment.strip()}"
-
     final_line = f"{ip} {hostname}"
-    if line_comment:
-        final_line += f" {line_comment}"
+    comment = comment.strip()
+
+    if comment:
+        final_line += f" {comment}"
     if marker.strip():
-        # ensure we add a space if there's something else
         final_line += f" {marker.strip()}"
 
     if is_commented_out:
@@ -147,7 +135,7 @@ def find_line_index(lines_data, hostname, marker):
     Returns index or None if not found.
     """
     for i, line in enumerate(lines_data):
-        original_line, ip, host, _, trailing, commented = parse_line_components(line)
+        _, ip, host, _, trailing, commented = parse_line_components(line)
         if host == hostname:
             if marker == "":
                 return i
@@ -183,8 +171,6 @@ def update_entry(lines_data, ip, hostname, user_comment, marker):
     original_line, old_ip, old_host, _, old_trailing, old_commented = parse_line_components(
         lines_data[idx]
     )
-    # parse user comment from old trailing?
-    # We'll just override with the new user comment for clarity
     lines_data[idx] = build_line(ip, hostname, user_comment, marker, old_commented)
     return lines_data
 
@@ -241,8 +227,6 @@ def list_entries(lines_data, marker, output_json=False):
     for line in lines_data:
         original_line, ip, host, _, trailing, commented = parse_line_components(line)
         if host and (marker == "" or trailing.endswith(marker)):
-            # We'll parse user comment from trailing if needed
-            # For now let's just store everything in a dict for JSON
             entry = {
                 "ip": ip,
                 "hostname": host,
@@ -265,6 +249,31 @@ def list_entries(lines_data, marker, output_json=False):
         for entry in enabled_entries:
             print(f"{entry['ip']} {entry['hostname']} {entry['comment_or_marker']} (enabled)")
 
+def parse_full_line(line):
+    """
+    Parse a string meant to look like an /etc/hosts line:
+    e.g. '127.0.0.1   myhost.local   # Some comment'
+    We'll extract ip, hostname, and everything after as comment.
+    Raises ValueError if we can't find at least IP and hostname.
+    """
+    line = line.strip()
+    if not line:
+        raise ValueError("Empty line provided as --full-line")
+    if line.startswith('#'):
+        # If user typed a fully commented line, let's remove '#' and parse
+        line = line[1:].strip()
+
+    parts = line.split()
+    if len(parts) < 2:
+        raise ValueError("Must have both IP and hostname in the provided line")
+
+    ip = parts[0]
+    hostname = parts[1]
+    comment_parts = parts[2:] if len(parts) > 2 else []
+    # If the user typed '# something', it's already included in comment_parts.
+    comment = " ".join(comment_parts)
+    return ip, hostname, comment
+
 def main():
     global VERBOSITY_LEVEL
     parser = argparse.ArgumentParser(
@@ -284,15 +293,24 @@ def main():
 
     # add
     parser_add = subparsers.add_parser("add", help="Add a new entry to /etc/hosts.")
-    parser_add.add_argument("--ip", required=True, help="IP address to add.")
-    parser_add.add_argument("--hostname", required=True, help="Hostname to add.")
+    # Optional short options as requested: -h for IP, -d for hostname
+    # but careful not to override default -h (help). We'll rename the short opts a bit:
+    parser_add.add_argument("-i", "--ip", required=False, help="IP address to add.")
+    parser_add.add_argument("-d", "--hostname", required=False, help="Hostname to add.")
     parser_add.add_argument("--comment", default="", help="Optional comment for this entry.")
+    parser_add.add_argument("--full-line", required=False,
+                            help="Provide a full string in /etc/hosts format (includes IP, hostname, etc.). "
+                                 "If used, do not combine with --ip or --hostname or --comment.")
 
     # update
     parser_update = subparsers.add_parser("update", help="Update an existing entry or create if not found.")
-    parser_update.add_argument("--ip", required=True, help="IP address to update.")
-    parser_update.add_argument("--hostname", required=True, help="Hostname to update.")
+    # same pattern for short opts
+    parser_update.add_argument("-i", "--ip", required=False, help="IP address to update.")
+    parser_update.add_argument("-d", "--hostname", required=False, help="Hostname to update.")
     parser_update.add_argument("--comment", default="", help="Optional comment for this entry.")
+    parser_update.add_argument("--full-line", required=False,
+                               help="Provide a full string in /etc/hosts format (includes IP, hostname, etc.). "
+                                    "If used, do not combine with --ip or --hostname or --comment.")
 
     # disable
     parser_disable = subparsers.add_parser("disable", help="Comment out an existing entry.")
@@ -310,7 +328,6 @@ def main():
     parser_list = subparsers.add_parser("list", help="List entries managed by this tool.")
 
     args = parser.parse_args()
-
     VERBOSITY_LEVEL = args.verbose
 
     command = args.command
@@ -319,12 +336,39 @@ def main():
     lines_data = parse_hosts(hosts_path)
 
     if command == "add":
-        lines_data = add_entry(lines_data, args.ip, args.hostname, args.comment, marker)
+        if args.full_line and (args.ip or args.hostname or args.comment):
+            error_exit("Cannot combine --full-line with --ip/--hostname/--comment.", 2)
+        if not args.full_line and (not args.ip or not args.hostname):
+            error_exit("Must provide either --full-line OR both --ip and --hostname.", 2)
+
+        if args.full_line:
+            try:
+                ip, host, comment = parse_full_line(args.full_line)
+                lines_data = add_entry(lines_data, ip, host, comment, marker)
+            except ValueError as ve:
+                error_exit(str(ve), 3)
+        else:
+            lines_data = add_entry(lines_data, args.ip, args.hostname, args.comment, marker)
+
         write_hosts(hosts_path, lines_data)
         sys.exit(0)
 
     elif command == "update":
-        lines_data = update_entry(lines_data, args.ip, args.hostname, args.comment, marker)
+        if args.full_line and (args.ip or args.hostname or args.comment):
+            error_exit("Cannot combine --full-line with --ip/--hostname/--comment.", 2)
+
+        if not args.full_line and (not args.ip or not args.hostname):
+            error_exit("Must provide either --full-line OR both --ip and --hostname.", 2)
+
+        if args.full_line:
+            try:
+                ip, host, comment = parse_full_line(args.full_line)
+                lines_data = update_entry(lines_data, ip, host, comment, marker)
+            except ValueError as ve:
+                error_exit(str(ve), 3)
+        else:
+            lines_data = update_entry(lines_data, args.ip, args.hostname, args.comment, marker)
+
         write_hosts(hosts_path, lines_data)
         sys.exit(0)
 
