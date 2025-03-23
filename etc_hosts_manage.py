@@ -6,12 +6,12 @@ This script allows adding, updating, disabling, enabling, deleting, and listing
 hosts entries that it manages in /etc/hosts.
 
 Usage Examples:
-    hosts_manage.py add --ip 127.0.0.50 --hostname test.local
-    hosts_manage.py update --ip 127.0.0.99 --hostname test.local
-    hosts_manage.py disable --hostname test.local
-    hosts_manage.py enable --hostname test.local
-    hosts_manage.py delete --hostname test.local
-    hosts_manage.py list
+    etc_hosts_manage.py add --ip 127.0.0.50 --hostname test.local
+    etc_hosts_manage.py update --ip 127.0.0.99 --hostname test.local
+    etc_hosts_manage.py disable --hostname test.local
+    etc_hosts_manage.py enable --hostname test.local
+    etc_hosts_manage.py delete --hostname test.local
+    etc_hosts_manage.py list
 
 It supports optional comment, marker, verbosity levels, etc.
 
