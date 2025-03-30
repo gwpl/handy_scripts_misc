@@ -6,7 +6,7 @@ import time
 from datetime import datetime
 import argparse
 
-def scan(basename, file_format, date_option, sane_device, mode, resolution, verbose, icc_profile, output_file, progress, all_options, extra_args):
+def scan(basename, file_format, date_option, sane_device, mode, resolution, verbose, icc_profile, output_file, progress, all_options, extra_args, retries=3, delay=1):
     cmd = ['scanimage', '--device', sane_device, '--mode', mode, '--resolution', resolution, '--format', file_format]
     
     if icc_profile:
@@ -52,14 +52,19 @@ def scan(basename, file_format, date_option, sane_device, mode, resolution, verb
 
     cmd.extend(extra_args)
 
-    scanimage_result = subprocess.run(cmd)
-
-    if scanimage_result.returncode == 0:
-        print(filename)
-        return filename
-    else:
-        print(f"ERROR: scanimage failed with return code {scanimage_result.returncode}", file=sys.stderr)
-        return None
+    attempt = 0
+    while attempt <= retries:
+        scanimage_result = subprocess.run(cmd)
+        if scanimage_result.returncode == 0:
+            print(filename)
+            return filename
+        else:
+            print(f"ERROR: scanimage failed with return code {scanimage_result.returncode}", file=sys.stderr)
+            if attempt < retries:
+                print(f"INFO: Retrying in {delay} seconds... (Attempt {attempt + 1} of {retries})", file=sys.stderr)
+                time.sleep(delay)
+            attempt += 1
+    return None
 
 
 def main():
@@ -76,6 +81,8 @@ def main():
     parser.add_argument('-p', '--progress', action='store_true', help='Print progress messages')
     parser.add_argument('-A', '--all-options', action='store_true', help='List all available backend options')
     parser.add_argument('-V', '--view', help='Command to view the scanned file. Use {} as a placeholder for the filename.')
+    parser.add_argument('--retries', type=int, default=3, help='Number of retries if scanimage fails')
+    parser.add_argument('--delay', type=int, default=1, help='Delay in seconds between retries')
     parser.add_argument('extra_args', nargs=argparse.REMAINDER, help='Additional scanimage parameters after --')
     
     args = parser.parse_args()
@@ -88,7 +95,7 @@ def main():
             print("ERROR: SANE device not provided. Use `scanimage -L` to find one and provide via `-d` flag or set environment variable $SCANIMAGE_DEVICE.", file=sys.stderr)
             sys.exit(1)
     
-    filename = scan(args.basename, args.format, args.date, args.device_name, args.mode, args.resolution, args.verbose, args.icc_profile, args.output_file, args.progress, args.all_options, args.extra_args)
+    filename = scan(args.basename, args.format, args.date, args.device_name, args.mode, args.resolution, args.verbose, args.icc_profile, args.output_file, args.progress, args.all_options, args.extra_args, args.retries, args.delay)
     
     if args.view:
         if '{}' in args.view:
