@@ -49,10 +49,10 @@ def scan(basename, file_format, date_option, sane_device, verbose):
 def main():
     parser = argparse.ArgumentParser(description='Scan an image with options.')
     parser.add_argument('-b', '--basename', default='scanimage', help='Base name for the output file')
-    parser.add_argument('-f', '--format', default='png', help='Output file format')
+    parser.add_argument('-f', '--format', default='png', help='Output file format ( pnm|tiff|png|jpeg|pdf )')
     parser.add_argument('--date', choices=['prefix', 'suffix', 'no'], default='suffix', help='Date position in filename')
     parser.add_argument('-v', '--verbose', action='store_true', help='Enable verbose output')
-    parser.add_argument('-d', '--device', default=None, help='SANE device to use (use `scanimage -L` to find one), if not provided, env. $SCANIMAGE_DEVICE is used')
+    parser.add_argument('-d', '--device-name', default=None, help='SANE device to use (use `scanimage -L` to find one), if not provided, env. $SCANIMAGE_DEVICE is used')
     parser.add_argument('-V', '--view', help='Command to view the scanned file. Use {} as a placeholder for the filename.')
     
     args = parser.parse_args()
