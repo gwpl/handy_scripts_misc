@@ -6,7 +6,7 @@ import time
 from datetime import datetime
 import argparse
 
-def scan(basename, file_format, date_option, sane_device, verbose, icc_profile, output_file, progress):
+def scan(basename, file_format, date_option, sane_device, verbose, icc_profile, output_file, progress, all_options, extra_args):
     cmd = ['scanimage', '--device', sane_device, '--mode=Color', '--resolution', '600', '--format=tiff']
     
     if icc_profile:
@@ -15,6 +15,12 @@ def scan(basename, file_format, date_option, sane_device, verbose, icc_profile, 
     if progress:
         cmd.append('--progress')
     
+    if all_options:
+        cmd.append('--all-options')
+        cmd.extend(extra_args)
+        scanimage_result = subprocess.run(cmd)
+        return None
+
     if output_file:
         filename = output_file
     else:
@@ -25,12 +31,12 @@ def scan(basename, file_format, date_option, sane_device, verbose, icc_profile, 
             filename = f"{basename}-{timestamp}.{file_format}"
         else:
             filename = f"{basename}.{file_format}"
-    
+
     cmd.extend(['--output-file', filename])
-    
+
     if verbose:
         print(f"INFO: Running command: {' '.join(cmd)}", file=sys.stderr)
-    
+
     while not output_file and os.path.exists(filename):
         if verbose:
             print(f"INFO: File {filename} already exists. Waiting 1 second.", file=sys.stderr)
@@ -43,17 +49,18 @@ def scan(basename, file_format, date_option, sane_device, verbose, icc_profile, 
         else:
             filename = f"{basename}.{file_format}"
         cmd[-1] = filename
-    
+
+    cmd.extend(extra_args)
+
     scanimage_result = subprocess.run(cmd)
 
-    # if process is successful we print just the filename
     if scanimage_result.returncode == 0:
         print(filename)
         return filename
     else:
         print(f"ERROR: scanimage failed with return code {scanimage_result.returncode}", file=sys.stderr)
         return None
-    
+
     if verbose:
         print(f"INFO: Scan saved to {filename}", file=sys.stderr)
 
@@ -67,19 +74,21 @@ def main():
     parser.add_argument('-i', '--icc-profile', help='Include this ICC profile into TIFF file')
     parser.add_argument('-o', '--output-file', help='Save output to the given file instead of stdout')
     parser.add_argument('-p', '--progress', action='store_true', help='Print progress messages')
+    parser.add_argument('-A', '--all-options', action='store_true', help='List all available backend options')
     parser.add_argument('-V', '--view', help='Command to view the scanned file. Use {} as a placeholder for the filename.')
+    parser.add_argument('extra_args', nargs=argparse.REMAINDER, help='Additional scanimage parameters after --')
     
     args = parser.parse_args()
     
     # if device not provided by user env. $SCANIMAGE_DEVICE is set.
-    if args.device is None:
+    if args.device_name is None:
         # if device not provided by arg or env then display info
-        args.device = os.getenv('SCANIMAGE_DEVICE')
-        if args.device is None:
+        args.device_name = os.getenv('SCANIMAGE_DEVICE')
+        if args.device_name is None:
             print("ERROR: SANE device not provided. Use `scanimage -L` to find one and provide via `-d` flag or set environment variable $SCANIMAGE_DEVICE.", file=sys.stderr)
             sys.exit(1)
     
-    filename = scan(args.basename, args.format, args.date, args.device, args.verbose, args.icc_profile, args.output_file, args.progress)
+    filename = scan(args.basename, args.format, args.date, args.device_name, args.verbose, args.icc_profile, args.output_file, args.progress, args.all_options, args.extra_args)
     
     if args.view:
         if '{}' in args.view:
