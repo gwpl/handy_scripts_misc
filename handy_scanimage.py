@@ -98,10 +98,10 @@ def main():
                         help='Scan source (Flatbed, ADF, or ADF Duplex)')
 
     # New argument to handle batch scanning, similar to scanimage's CLI.
-    # If used with no value, it becomes True, meaning "batch mode", no specific prefix passed.
-    # If a string is provided, that is the prefix format.
     parser.add_argument('--batch', nargs='?', const=True,
-                        help='Enable batch scanning with optional prefix format for the output file(s). If prefix is omitted, uses --output-file if provided, otherwise uses "scan_%%d.<format>". If prefix does not contain "%%d", it is automatically appended.')
+                        help='Enable batch scanning with optional prefix format for the output file(s). '
+                             'If prefix is omitted, uses --output-file if provided, otherwise uses "scan_%%d.<format>". '
+                             'If prefix does not contain "%%d", it is automatically appended.')
 
     parser.add_argument('extra_args', nargs=argparse.REMAINDER, help='Additional scanimage parameters after --')
     
@@ -113,7 +113,25 @@ def main():
             print("ERROR: SANE device not provided. Use `scanimage -L` to find one and provide via `-d` flag or set environment variable $SCANIMAGE_DEVICE.", file=sys.stderr)
             sys.exit(1)
 
-    # If batch mode is requested, replicate the scanimage batch behavior.
+    # If user chose ADF Duplex but did NOT specify --batch, let's automatically
+    # switch to batch mode with a default prefix that includes date and page number.
+    if args.source == 'ADF Duplex' and args.batch is None:
+        timestamp = datetime.now().strftime("%Y-%m-%d--%H-%M-%S")
+        if args.output_file:
+            base_no_ext = args.output_file
+        else:
+            if args.date == 'prefix':
+                base_no_ext = f"{timestamp}-{args.basename}"
+            elif args.date == 'suffix':
+                base_no_ext = f"{args.basename}-{timestamp}"
+            else:
+                base_no_ext = f"{args.basename}"
+        prefix = f"{base_no_ext}-page-%d.{args.format}"
+        if args.verbose:
+            print(f"INFO: Source is ADF Duplex but no batch specified, automatically enabling batch scanning with prefix '{prefix}'", file=sys.stderr)
+        args.batch = prefix
+
+    # If batch mode is requested (or forced above), replicate the scanimage batch behavior.
     if args.batch is not None:
         # Determine the prefix
         if args.batch is True:
@@ -123,12 +141,11 @@ def main():
             else:
                 prefix = "scan_%d"
         else:
-            # user typed --batch=something
+            # user typed --batch=something (or we forced it above)
             prefix = str(args.batch)
 
         # If there's no '%d' in prefix, append it
         if '%d' not in prefix:
-            # add it before any extension if present
             if '.' in prefix:
                 dot_index = prefix.rfind('.')
                 prefix = prefix[:dot_index] + '_%d' + prefix[dot_index:]
@@ -136,9 +153,6 @@ def main():
                 prefix += '_%d'
 
         # If there's no extension at all, add one based on --format
-        # A simple check: if the last '.' is before any path slash or not present
-        # We'll do a naive approach: if there's no '.' in prefix (after we've possibly appended '_%d'),
-        # we add '.' + args.format
         if '.' not in prefix:
             prefix += '.' + args.format
 
@@ -188,7 +202,7 @@ def main():
             sys.exit(ret.returncode)
         else:
             # We won't attempt to open with a viewer because many files could be created
-            # in batch mode. The user can open them manually.
+            # in batch mode. The user can open them manually if needed.
             sys.exit(0)
 
     # If not batch, do a single scan
