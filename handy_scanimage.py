@@ -6,8 +6,8 @@ import time
 from datetime import datetime
 import argparse
 
-def scan(basename, file_format, date_option, sane_device, verbose, icc_profile, output_file, progress, all_options, extra_args):
-    cmd = ['scanimage', '--device', sane_device, '--mode=Color', '--resolution', '600', '--format=tiff']
+def scan(basename, file_format, date_option, sane_device, mode, resolution, verbose, icc_profile, output_file, progress, all_options, extra_args):
+    cmd = ['scanimage', '--device', sane_device, '--mode', mode, '--resolution', resolution, '--format', file_format]
     
     if icc_profile:
         cmd.extend(['--icc-profile', icc_profile])
@@ -61,13 +61,13 @@ def scan(basename, file_format, date_option, sane_device, verbose, icc_profile, 
         print(f"ERROR: scanimage failed with return code {scanimage_result.returncode}", file=sys.stderr)
         return None
 
-    if verbose:
-        print(f"INFO: Scan saved to {filename}", file=sys.stderr)
 
 def main():
     parser = argparse.ArgumentParser(description='Scan an image with options.')
     parser.add_argument('-b', '--basename', default='scanimage', help='Base name for the output file')
-    parser.add_argument('-f', '--format', default='png', help='Output file format ( pnm|tiff|png|jpeg|pdf )')
+    parser.add_argument('-f', '--format', default=os.getenv('SCANIMAGE_FORMAT', 'png'), help='Output file format ( pnm|tiff|png|jpeg|pdf )')
+    parser.add_argument('-m', '--mode', default='Color', choices=['Color', 'Gray'], help='Scan mode (Color|Gray)')
+    parser.add_argument('-r','--resolution','--dpi', default=os.getenv('SCANIMAGE_RESOLUTION', '600'), help='Scan resolution in dpi')
     parser.add_argument('--date', choices=['prefix', 'suffix', 'no'], default='suffix', help='Date position in filename')
     parser.add_argument('-v', '--verbose', action='store_true', help='Enable verbose output')
     parser.add_argument('-d', '--device-name', default=None, help='SANE device to use (use `scanimage -L` to find one), if not provided, env. $SCANIMAGE_DEVICE is used')
@@ -88,7 +88,7 @@ def main():
             print("ERROR: SANE device not provided. Use `scanimage -L` to find one and provide via `-d` flag or set environment variable $SCANIMAGE_DEVICE.", file=sys.stderr)
             sys.exit(1)
     
-    filename = scan(args.basename, args.format, args.date, args.device_name, args.verbose, args.icc_profile, args.output_file, args.progress, args.all_options, args.extra_args)
+    filename = scan(args.basename, args.format, args.date, args.device_name, args.mode, args.resolution, args.verbose, args.icc_profile, args.output_file, args.progress, args.all_options, args.extra_args)
     
     if args.view:
         if '{}' in args.view:
