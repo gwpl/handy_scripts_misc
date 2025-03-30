@@ -38,8 +38,10 @@ def scan(basename, file_format, date_option, sane_device, verbose):
     # if process is successful we print just the filename
     if scanimage_result.returncode == 0:
         print(filename)
+        return filename
     else:
         print(f"ERROR: scanimage failed with return code {scanimage_result.returncode}", file=sys.stderr)
+        return None
     
     if verbose:
         print(f"INFO: Scan saved to {filename}", file=sys.stderr)
