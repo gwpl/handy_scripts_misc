@@ -6,8 +6,15 @@ import time
 from datetime import datetime
 import argparse
 
-def scan(basename, file_format, date_option, sane_device, mode, resolution, verbose, icc_profile, output_file, progress, all_options, extra_args, retries=3, delay=1):
-    cmd = ['scanimage', '--device', sane_device, '--mode', mode, '--resolution', resolution, '--format', file_format]
+def scan(basename, file_format, date_option, sane_device, mode, resolution, verbose, icc_profile, output_file, progress, all_options, extra_args, retries=3, delay=1, source='Flatbed'):
+    cmd = [
+        'scanimage',
+        '--device', sane_device,
+        '--mode', mode,
+        '--resolution', resolution,
+        '--format', file_format,
+        '--source', source
+    ]
     
     if icc_profile:
         cmd.extend(['--icc-profile', icc_profile])
@@ -18,6 +25,8 @@ def scan(basename, file_format, date_option, sane_device, mode, resolution, verb
     if all_options:
         cmd.append('--all-options')
         cmd.extend(extra_args)
+        if verbose:
+            print(f"INFO: Running command: {' '.join(cmd)}", file=sys.stderr)
         scanimage_result = subprocess.run(cmd)
         return None
 
@@ -84,11 +93,15 @@ def main():
     parser.add_argument('--retries', type=int, default=3, help='Number of retries if scanimage fails')
     parser.add_argument('--delay', type=int, default=1, help='Delay in seconds between retries')
 
+    # New source argument
+    parser.add_argument('-s','--source', choices=['Flatbed','ADF','ADF Duplex'], default='Flatbed',
+                        help='Scan source (Flatbed, ADF, or ADF Duplex)')
+
     # New argument to handle batch scanning, similar to scanimage's CLI.
     # If used with no value, it becomes True, meaning "batch mode", no specific prefix passed.
-    # If a string is provided, that is the prefix format. 
+    # If a string is provided, that is the prefix format.
     parser.add_argument('--batch', nargs='?', const=True,
-                        help='Enable batch scanning with optional prefix format for the output file(s). If prefix is omitted, uses --output-file if provided, otherwise uses "scan_%d.<format>". If prefix does not contain "%%d", it is automatically appended.')
+                        help='Enable batch scanning with optional prefix format for the output file(s). If prefix is omitted, uses --output-file if provided, otherwise uses "scan_%%d.<format>". If prefix does not contain "%%d", it is automatically appended.')
 
     parser.add_argument('extra_args', nargs=argparse.REMAINDER, help='Additional scanimage parameters after --')
     
@@ -125,7 +138,7 @@ def main():
         # If there's no extension at all, add one based on --format
         # A simple check: if the last '.' is before any path slash or not present
         # We'll do a naive approach: if there's no '.' in prefix (after we've possibly appended '_%d'),
-        # we add '.' + format
+        # we add '.' + args.format
         if '.' not in prefix:
             prefix += '.' + args.format
 
@@ -136,8 +149,23 @@ def main():
             '--mode', args.mode,
             '--resolution', args.resolution,
             '--format', args.format,
+            '--source', args.source,
             f'--batch={prefix}'
         ]
+
+        # If the user selected ADF Duplex, automatically add '--batch-double' and '--batch-increment=1' if missing
+        if args.source == 'ADF Duplex':
+            has_batch_double = any(arg.startswith('--batch-double') for arg in args.extra_args) or any(arg.startswith('--batch-double') for arg in batch_cmd)
+            if not has_batch_double:
+                if args.verbose:
+                    print("INFO: Adding --batch-double for ADF Duplex", file=sys.stderr)
+                batch_cmd.append('--batch-double')
+
+            has_batch_increment = any(arg.startswith('--batch-increment=') for arg in args.extra_args) or any(arg.startswith('--batch-increment=') for arg in batch_cmd)
+            if not has_batch_increment:
+                if args.verbose:
+                    print("INFO: Adding --batch-increment=1 for ADF Duplex", file=sys.stderr)
+                batch_cmd.append('--batch-increment=1')
 
         if args.icc_profile:
             batch_cmd.extend(['--icc-profile', args.icc_profile])
@@ -164,9 +192,23 @@ def main():
             sys.exit(0)
 
     # If not batch, do a single scan
-    filename = scan(args.basename, args.format, args.date, args.device_name, args.mode,
-                    args.resolution, args.verbose, args.icc_profile, args.output_file,
-                    args.progress, args.all_options, args.extra_args, args.retries, args.delay)
+    filename = scan(
+        basename=args.basename,
+        file_format=args.format,
+        date_option=args.date,
+        sane_device=args.device_name,
+        mode=args.mode,
+        resolution=args.resolution,
+        verbose=args.verbose,
+        icc_profile=args.icc_profile,
+        output_file=args.output_file,
+        progress=args.progress,
+        all_options=args.all_options,
+        extra_args=args.extra_args,
+        retries=args.retries,
+        delay=args.delay,
+        source=args.source
+    )
     
     # If we have a viewer command, try to open the scanned file
     if filename and args.view:
