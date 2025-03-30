@@ -77,27 +77,99 @@ def main():
     parser.add_argument('-v', '--verbose', action='store_true', help='Enable verbose output')
     parser.add_argument('-d', '--device-name', default=None, help='SANE device to use (use `scanimage -L` to find one), if not provided, env. $SCANIMAGE_DEVICE is used')
     parser.add_argument('-i', '--icc-profile', help='Include this ICC profile into TIFF file')
-    parser.add_argument('-o', '--output-file', help='Save output to the given file instead of stdout')
+    parser.add_argument('-o', '--output-file', help='Save output to the given file instead of stdout (or if --batch is used, treat this as the batch prefix).')
     parser.add_argument('-p', '--progress', action='store_true', help='Print progress messages')
     parser.add_argument('-A', '--all-options', action='store_true', help='List all available backend options')
     parser.add_argument('-V', '--view', help='Command to view the scanned file. Use {} as a placeholder for the filename.')
     parser.add_argument('--retries', type=int, default=3, help='Number of retries if scanimage fails')
     parser.add_argument('--delay', type=int, default=1, help='Delay in seconds between retries')
+
+    # New argument to handle batch scanning, similar to scanimage's CLI.
+    # If used with no value, it becomes True, meaning "batch mode", no specific prefix passed.
+    # If a string is provided, that is the prefix format. 
+    parser.add_argument('--batch', nargs='?', const=True,
+                        help='Enable batch scanning with optional prefix format for the output file(s). If prefix is omitted, uses --output-file if provided, otherwise uses "scan_%d.<format>". If prefix does not contain "%%d", it is automatically appended.')
+
     parser.add_argument('extra_args', nargs=argparse.REMAINDER, help='Additional scanimage parameters after --')
     
     args = parser.parse_args()
     
-    # if device not provided by user env. $SCANIMAGE_DEVICE is set.
     if args.device_name is None:
-        # if device not provided by arg or env then display info
         args.device_name = os.getenv('SCANIMAGE_DEVICE')
         if args.device_name is None:
             print("ERROR: SANE device not provided. Use `scanimage -L` to find one and provide via `-d` flag or set environment variable $SCANIMAGE_DEVICE.", file=sys.stderr)
             sys.exit(1)
+
+    # If batch mode is requested, replicate the scanimage batch behavior.
+    if args.batch is not None:
+        # Determine the prefix
+        if args.batch is True:
+            # user typed --batch with no argument
+            if args.output_file:
+                prefix = args.output_file
+            else:
+                prefix = "scan_%d"
+        else:
+            # user typed --batch=something
+            prefix = str(args.batch)
+
+        # If there's no '%d' in prefix, append it
+        if '%d' not in prefix:
+            # add it before any extension if present
+            if '.' in prefix:
+                dot_index = prefix.rfind('.')
+                prefix = prefix[:dot_index] + '_%d' + prefix[dot_index:]
+            else:
+                prefix += '_%d'
+
+        # If there's no extension at all, add one based on --format
+        # A simple check: if the last '.' is before any path slash or not present
+        # We'll do a naive approach: if there's no '.' in prefix (after we've possibly appended '_%d'),
+        # we add '.' + format
+        if '.' not in prefix:
+            prefix += '.' + args.format
+
+        # Build the batch command
+        batch_cmd = [
+            'scanimage',
+            '--device', args.device_name,
+            '--mode', args.mode,
+            '--resolution', args.resolution,
+            '--format', args.format,
+            f'--batch={prefix}'
+        ]
+
+        if args.icc_profile:
+            batch_cmd.extend(['--icc-profile', args.icc_profile])
+
+        if args.progress:
+            batch_cmd.append('--progress')
+
+        if args.all_options:
+            batch_cmd.append('--all-options')
+
+        # Include extra_args
+        batch_cmd.extend(args.extra_args)
+
+        if args.verbose:
+            print(f"INFO: Running command: {' '.join(batch_cmd)}", file=sys.stderr)
+
+        ret = subprocess.run(batch_cmd)
+        if ret.returncode != 0:
+            print(f"ERROR: scanimage batch mode failed with return code {ret.returncode}", file=sys.stderr)
+            sys.exit(ret.returncode)
+        else:
+            # We won't attempt to open with a viewer because many files could be created
+            # in batch mode. The user can open them manually.
+            sys.exit(0)
+
+    # If not batch, do a single scan
+    filename = scan(args.basename, args.format, args.date, args.device_name, args.mode,
+                    args.resolution, args.verbose, args.icc_profile, args.output_file,
+                    args.progress, args.all_options, args.extra_args, args.retries, args.delay)
     
-    filename = scan(args.basename, args.format, args.date, args.device_name, args.mode, args.resolution, args.verbose, args.icc_profile, args.output_file, args.progress, args.all_options, args.extra_args, args.retries, args.delay)
-    
-    if args.view:
+    # If we have a viewer command, try to open the scanned file
+    if filename and args.view:
         if '{}' in args.view:
             view_cmd = args.view.format(filename)
             view_cmd_list = view_cmd.split()
