@@ -51,6 +51,7 @@ def main():
     parser.add_argument('--date', choices=['prefix', 'suffix', 'no'], default='suffix', help='Date position in filename')
     parser.add_argument('-v', '--verbose', action='store_true', help='Enable verbose output')
     parser.add_argument('-d', '--device', default=None, help='SANE device to use (use `scanimage -L` to find one), if not provided, env. $SCANIMAGE_DEVICE is used')
+    parser.add_argument('-V', '--view', help='Command to view the scanned file. Use {} as a placeholder for the filename.')
     
     args = parser.parse_args()
     
@@ -62,7 +63,19 @@ def main():
             print("ERROR: SANE device not provided. Use `scanimage -L` to find one and provide via `-d` flag or set environment variable $SCANIMAGE_DEVICE.", file=sys.stderr)
             sys.exit(1)
     
-    scan(args.basename, args.format, args.date, args.device, args.verbose)
+    filename = scan(args.basename, args.format, args.date, args.device, args.verbose)
+    
+    if args.view:
+        if '{}' in args.view:
+            view_cmd = args.view.format(filename)
+            view_cmd_list = view_cmd.split()
+        else:
+            view_cmd_list = args.view.split() + [filename]
+        
+        if args.verbose:
+            print(f"INFO: Running viewer command: {' '.join(view_cmd_list)}", file=sys.stderr)
+        
+        subprocess.run(view_cmd_list)
 
 if __name__ == '__main__':
     main()
