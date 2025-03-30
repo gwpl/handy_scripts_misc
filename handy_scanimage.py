@@ -201,8 +201,30 @@ def main():
             print(f"ERROR: scanimage batch mode failed with return code {ret.returncode}", file=sys.stderr)
             sys.exit(ret.returncode)
         else:
-            # We won't attempt to open with a viewer because many files could be created
-            # in batch mode. The user can open them manually if needed.
+            # If the user specified a viewer, we try to open all generated files
+            # by substituting %d until no more files exist.
+            if args.view and '%d' in prefix:
+                i = 1
+                while True:
+                    # Attempt to build the file name by substituting the page number
+                    try:
+                        candidate = prefix % i
+                    except TypeError:
+                        # If prefix is something that can't be used with a simple int substitution, break
+                        break
+                    if not os.path.exists(candidate):
+                        break
+                    # Construct and run the view command for that file
+                    if '{}' in args.view:
+                        view_cmd = args.view.format(candidate)
+                        view_cmd_list = view_cmd.split()
+                    else:
+                        view_cmd_list = args.view.split() + [candidate]
+                    if args.verbose:
+                        print(f"INFO: Running viewer command for {candidate}: {' '.join(view_cmd_list)}", file=sys.stderr)
+                    subprocess.run(view_cmd_list)
+                    i += 1
+
             sys.exit(0)
 
     # If not batch, do a single scan
@@ -224,7 +246,7 @@ def main():
         source=args.source
     )
     
-    # If we have a viewer command, try to open the scanned file
+    # If we have a viewer command, try to open the single scanned file
     if filename and args.view:
         if '{}' in args.view:
             view_cmd = args.view.format(filename)
