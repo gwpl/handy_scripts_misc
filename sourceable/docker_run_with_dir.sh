@@ -1,7 +1,7 @@
 #!/bin/bash
 # **Jump into docker and work there on current directory with ease**
 #
-#  "Usage: docker_run_with_dir <directory> [ro|rw] [image=ubuntu:latest]"
+#  "Usage: docker_run_with_dir <directory> [ro|rw] [image=ubuntu:latest] [docker-run-opts...]"
 #
 # Features:
 # * maps your user and group, so created files will be accessible on host
@@ -9,11 +9,28 @@
 # * working `su` - allows your user inside docker to enter root via `su` passwordless.
 
 docker_run_with_dir () {
-    local dir="$1" mode="${2:-ro}" image="${3:-ubuntu:latest}"
+    local dir="$1"; shift
+    local mode="ro"
+    local image="ubuntu:latest"
 
     if [[ -z "$dir" || ! -d "$dir" ]]; then
-        echo "Usage: docker_run_with_dir <directory> [ro|rw] [image=$image]" >&2
+        echo "Usage: docker_run_with_dir <directory> [ro|rw] [image=$image] [docker-run-opts...]" >&2
         return 1
+    fi
+
+    # parse optional mode argument (only accept ro|rw)
+    if [[ $# -gt 0 && ( "$1" == "ro" || "$1" == "rw" ) ]]; then
+        mode="$1"; shift
+    fi
+
+    # parse optional image argument (skip flags starting with -)
+    if [[ $# -gt 0 && "$1" != "--" && "$1" != "-"* ]]; then
+        image="$1"; shift
+    fi
+
+    # skip sentinel if present
+    if [[ $# -gt 0 && "$1" == "--" ]]; then
+        shift
     fi
 
     local uid=$(id -u) gid=$(id -g) username=$(id -un) groupname=$(getent group "$gid" | cut -d: -f1)
@@ -22,6 +39,7 @@ docker_run_with_dir () {
     trap 'rm -rf "$temp_dir"' EXIT
 
     local homedir_inside='/tmp/home'
+    local extra_args=("$@")
     # Create a minimal /etc/passwd file that includes both root and the host user.
     cat > "${temp_dir}/passwd" <<EOF
 root:x:0:0:root:/root:/bin/bash
@@ -50,6 +68,7 @@ EOF
         -v "${temp_dir}/shadow":/etc/shadow:ro \
         -w /data \
         -u "${uid}:${gid}" \
+        "${extra_args[@]}" \
         "$image" \
         bash -c "mkdir -p ${homedir_inside} && exec bash"
 }
