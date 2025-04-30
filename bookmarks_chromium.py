@@ -377,6 +377,7 @@ if __name__ == "__main__":  # pragma: no cover
         main()
     except KeyboardInterrupt:
         log_warning("Interrupted by user")
+"""
 
 Please implement python script, 
 keep description and specification I provide you at a top of the file in comment
