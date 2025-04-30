@@ -301,9 +301,10 @@ def _build_parser() -> argparse.ArgumentParser:
         default=0,
         help="Increase verbosity (can be given multiple times)",
     )
-    p.add_argument("--user-data-dir", type=Path, help="Custom --user-data-dir path")
-    p.add_argument("--profile", default="Default", help="Browser profile name")
+    p.add_argument("-d", "--user-data-dir", type=Path, help="Custom --user-data-dir path")
+    p.add_argument("-p", "--profile", default="Default", help="Browser profile name")
     p.add_argument(
+        "-f",
         "--bookmarks-file",
         type=str,
         help="Explicit path to Bookmarks file (overrides user-data-dir/profile)",
@@ -311,21 +312,22 @@ def _build_parser() -> argparse.ArgumentParser:
 
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    # list-dirs
-    p_dirs = sub.add_parser("list-dirs", help="List bookmark folders")
+    # lsd
+    p_dirs = sub.add_parser("lsd", help="List bookmark folders")
     p_dirs.add_argument(
+        "-F",
         "--format",
         choices=["path", "csv", "jsonl"],
         default="path",
         help="Output format",
     )
     p_dirs.add_argument(
-        "--show-ids",
+        "--show-ids", "--ids",
         action="store_true",
         help="For --format path: append (id:XX)",
     )
     p_dirs.add_argument(
-        "--with-bookmarks",
+        "--with-bookmarks", "--bookmarks",
         action="store_true",
         help="Include bookmark items below each folder",
     )
@@ -347,6 +349,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="What kinds of child nodes to display",
     )
     p_ls.add_argument(
+        "-F",
         "--contents-format",
         choices=["urls", "urls_titles", "markdown", "jsonl"],
         default="urls_titles",
