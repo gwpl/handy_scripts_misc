@@ -29,6 +29,15 @@ emits the list to **stdout** *and* the system clipboard.
 ./collect_urls_from_all_tabs.py -S 1.0
 ```
 
+#### Combined workflow with other tools
+
+```bash
+# Paste bookmarks from several folders into Telegram with 12-second pauses
+for folder in foo bar zoo ; do \
+    bookmarks_chromium.py -f Bookmarks ls "$folder" -F urls ; \
+done | paste_lines_to_window.py -v -e -S 12
+```
+
 ### Dependencies
 Python 3, `xdotool`, `xclip`, `xprop`  
 Arch Linux:

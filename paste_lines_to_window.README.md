@@ -32,6 +32,15 @@ cat urls.txt | ./paste_lines_to_window.py -B
 ./paste_lines_to_window.py -f commands.sh -S 2.0 -v
 ```
 
+#### Combined example with `bookmarks_chromium.py`
+
+```bash
+# Paste into Telegram with 12-second breaks, sending bookmarks from folders foo bar zoo
+for folder in foo bar zoo ; do \
+    bookmarks_chromium.py -f Bookmarks ls "$folder" -F urls ; \
+done | paste_lines_to_window.py -v -e -S 12
+```
+
 ### Dependencies
 Python 3, `xdotool`, `xclip`, `xprop`
 
