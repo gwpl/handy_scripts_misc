@@ -5,6 +5,10 @@
 #
 # This script can be *sourced* or *executed* directly.
 #
+# It is handy when often copy&paste links from e.g. github/gitlab,
+# and cloning many repositories on harddrive,
+# to clone them organized under $YOUR_REPOS_DIR/$USERNAME/$REPO name.
+#
 # Examples:
 #   repo-clone git@server:username/reponame
 #   repo-clone https://server/username/reponame.git
