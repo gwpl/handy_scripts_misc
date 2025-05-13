@@ -40,6 +40,8 @@ def parse_arguments() -> argparse.Namespace:
     
     parser.add_argument('-d', '--duplicates-threshold', type=int, default=4,
                         help='Number of consecutive duplicate URLs before stopping (default: 4)')
+    parser.add_argument('-M', '--max-tabs', type=int, default=1000,
+                        help='Maximum number of tabs to process before stopping (default: 1000)')
     return parser.parse_args()
 
 def log_verbose(message: str, verbose: bool) -> None:
@@ -278,11 +280,12 @@ def calculate_step_delay(sleep_delay: float, item_delay: Optional[float], verbos
     return final_delay
 
 def collect_urls(boot_delay: float, sleep_delay: float, item_delay: Optional[float], 
-                url_mode: str, duplicates_threshold: int, verbose: bool) -> List[str]:
+                url_mode: str, duplicates_threshold: int, max_tabs: int, verbose: bool) -> List[str]:
     """Collect URLs from browser tabs"""
     collected_urls: List[str] = []
     duplicates_counter = 0
     duplicates_consecutive = 0
+    tabs_visited = 0
     
     # Calculate the appropriate delay per step
     effective_sleep_delay = calculate_step_delay(sleep_delay, item_delay, verbose)
@@ -296,7 +299,7 @@ def collect_urls(boot_delay: float, sleep_delay: float, item_delay: Optional[flo
 
     log_verbose(f"URL processing mode: {url_mode}", verbose)
 
-    while duplicates_consecutive < duplicates_threshold:
+    while duplicates_consecutive < duplicates_threshold and tabs_visited < max_tabs:
         # Select address bar
         log_verbose("Pressing Ctrl+L (to select location)", verbose)
         send_key('ctrl+l', verbose)
@@ -328,6 +331,7 @@ def collect_urls(boot_delay: float, sleep_delay: float, item_delay: Optional[flo
         log_verbose("Moving to next tab", verbose)
         send_key('ctrl+Page_Down', verbose)
         time.sleep(effective_sleep_delay)  # Wait for tab switch
+        tabs_visited += 1
 
     return collected_urls
 
@@ -340,7 +344,7 @@ def main() -> None:
     
     try:
         urls = collect_urls(args.boot, args.sleep, args.item_delay, url_mode, 
-                           args.duplicates_threshold, args.verbose)
+                           args.duplicates_threshold, args.max_tabs, args.verbose)
         paste_to_clipboard("\n".join(urls))
         
         if args.verbose:
