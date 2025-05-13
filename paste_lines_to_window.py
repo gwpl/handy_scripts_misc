@@ -37,6 +37,8 @@ def parse_arguments() -> argparse.Namespace:
                         help='Use terminal paste commands (ctrl+shift+v,Return)')
     paste_mode.add_argument('-B', '--browser-new-tabs', action='store_true',
                         help='Use browser new tab sequence (ctrl+t,ctrl+v,Return)')
+    paste_mode.add_argument('-K', '--browser-and-bookmark', action='store_true',
+                        help='Use browser new tab sequence and bookmark them (ctrl+t,ctrl+v,Return,ctrl+d,Return)')
     parser.add_argument('-d', '--delimiter', type=str, default=',',
                         help='Delimiter for paste commands (default: ,)')
     return parser.parse_args()
@@ -48,6 +50,8 @@ def resolve_paste_commands(args) -> str:
     """
     if args.terminal_paste:
         commands = 'ctrl+shift+v,Return'
+    elif args.browser_and_bookmark:
+        commands = 'ctrl+t,ctrl+v,Return,ctrl+d,Return'
     elif args.browser_new_tabs:
         commands = 'ctrl+t,ctrl+v,Return'
     elif args.editor_paste:
