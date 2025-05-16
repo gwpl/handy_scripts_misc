@@ -1,0 +1,85 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.8"
+# dependencies = ["TODO..."]
+# ///
+# 
+# TODO: improve this comment: this python3 script
+# has embedded requirements on a top
+# so can be `chmod+x` and executed
+# and `uv` will take care of dependencies,
+# if any ofc.
+
+"""
+
+excc - Echo to your clipboard !
+
+excc = echo + xcc = echo + 'xclip -sel clipboard'
+
+Copy last used command to clipboard with ease!
+
+TODO: description
+
+Usage: TODO
+
+TODO
+
+## Background: Inspired by xcc alias
+xcc alias in shell , that can be in `~/.bashrc` :
+
+```
+alias xcc='xclip -sel clipboard'
+```
+
+Is very useful. I highly recommented it!
+
+Mnemonics comes from fact that ctrl+x and ctrl+c are  usual shortcuts to copy into clipboard, so from x and c one gets ergonomic to type `xcc`.
+
+Usage of `xcc`:
+
+```
+$ # Copy output of program (here with code of scripts) into clipboard:
+$ head -n -0 *.py | xcc
+$ # Copy file into clipboard
+$ xcc < file
+```
+
+## copy to clipboard prevously used command in terminal:
+
+And here need for `excc` arised, as I found myself doing very often, in terminal
+
+* typing: `[arrow up]+[home]+[echo ']+[end]+[' | xcc']+[enter]` (ofc instead of `[arrow up]` can be `[ctrl+R]` for reversed search, etc.).
+
+To achieve sth like:
+
+```
+$ echo 'cmd param param... basically long command I want to copy into cliboard' | xcc
+```
+
+I come up with idea that it would be more ergonomic to type:
+
+* `[home]+[excc ]+[enter]` instead !
+
+```
+$ excc cmd para param...
+```
+
+and it's easy mnemonic "echo + xcc" = "xcc" !
+
+"""
+
+import ...
+
+
+TODO:
+
+* implement so it will use subprocess to call xclip.
+* make code robust and working across different envionemnts
+* so function copying to cliboard will check if xclip is present before using it, 
+* and if not will failover trying if alternatives are installed to use them.
+* Tool will copy to clipboard ALL PARAMETERS provided, therefore should not react to -h --help etc basically should NOT DO parameters parsing by desing (put it in the comment on a top), as it is meant to copy everything provided as parameters into clipboard
+* the only EXCEPTION is if FIRST parameter is `-sel` to select selection or if FIRST parmaeter is `-h` or `--help` , and this can be checked without parameters parsing just with argv[1] ...
+* organise code in small understandable single responsibility functions
+* in a way that can be both , executed standalong or imported into another script to reuse functions.
+
+
