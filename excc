@@ -62,6 +62,16 @@ $ excc cmd para param...
 
 and it's easy mnemonic "echo + xcc" = "xcc" !
 
+## Tip for Power Users / Alternative:
+
+For power users using vim in bash,
+can do :
+
+* `[ctrl+X][ctrl+e]` to open current command in `$EDITOR`
+* assuming `$EDITOR` is set to `vim`, then
+    * `:%y+` to copy entire buffer to clipboard
+
+
 """
 
 import os
