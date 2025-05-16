@@ -1,14 +1,12 @@
 #!/usr/bin/env -S uv run --script
 # /// script
 # requires-python = ">=3.8"
-# dependencies = ["TODO..."]
+# dependencies = []
 # ///
 # 
-# TODO: improve this comment: this python3 script
-# has embedded requirements on a top
-# so can be `chmod+x` and executed
-# and `uv` will take care of dependencies,
-# if any ofc.
+# This script is self-contained (pure Python) and can be executed
+# directly.  The `uv` she-bang at the top will create an isolated
+# environment on first run and take care of any future dependencies.
 
 """
 
@@ -18,11 +16,9 @@ excc = echo + xcc = echo + 'xclip -sel clipboard'
 
 Copy last used command to clipboard with ease!
 
-TODO: description
+A tiny helper that copies its arguments to the system clipboard.
 
-Usage: TODO
-
-TODO
+Usage: excc [-sel <selection>] <text to copy>
 
 ## Background: Inspired by xcc alias
 xcc alias in shell , that can be in `~/.bashrc` :
@@ -68,18 +64,98 @@ and it's easy mnemonic "echo + xcc" = "xcc" !
 
 """
 
-import ...
+import os
+import shutil
+import subprocess
+import sys
+from typing import Callable, List
 
 
-TODO:
+def _detect_backend() -> Callable[[str], List[str]]:
+    """
+    Detect an available clipboard backend and return a builder that
+    receives the desired selection and returns the command list.
 
-* implement so it will use subprocess to call xclip.
-* make code robust and working across different envionemnts
-* so function copying to cliboard will check if xclip is present before using it, 
-* and if not will failover trying if alternatives are installed to use them.
-* Tool will copy to clipboard ALL PARAMETERS provided, therefore should not react to -h --help etc basically should NOT DO parameters parsing by desing (put it in the comment on a top), as it is meant to copy everything provided as parameters into clipboard
-* the only EXCEPTION is if FIRST parameter is `-sel` to select selection or if FIRST parmaeter is `-h` or `--help` , and this can be checked without parameters parsing just with argv[1] ...
-* organise code in small understandable single responsibility functions
-* in a way that can be both , executed standalong or imported into another script to reuse functions.
+    Preference order:
+        1. command given in the EXCC_CLIP_CMD environment variable
+        2. xclip
+        3. wl-copy
+        4. xsel
+    """
+    env_cmd = os.getenv("EXCC_CLIP_CMD")
+    if env_cmd and shutil.which(env_cmd):
+        return lambda sel: [env_cmd]
+
+    if shutil.which("xclip"):
+        return lambda sel: ["xclip", "-selection", sel]
+    if shutil.which("wl-copy"):
+        return lambda sel: ["wl-copy", "-p"] if sel == "primary" else ["wl-copy"]
+    if shutil.which("xsel"):
+        return lambda sel: ["xsel", "--" + sel]
+
+    raise RuntimeError(
+        "No clipboard utility found (tried xclip, wl-copy, xsel) and "
+        "EXCC_CLIP_CMD is not set."
+    )
+
+
+_BACKEND = _detect_backend()
+
+
+def copy_to_clipboard(text: str, selection: str = "clipboard") -> None:
+    """
+    Copy *text* to the clipboard/selection chosen.
+    """
+    cmd = _BACKEND(selection)
+    subprocess.run(cmd, input=text.encode(), check=True)
+
+
+def _print_help() -> None:
+    print(
+        """\
+excc – echo to your clipboard
+
+Usage:
+    excc [-sel <selection>] <text …>
+    excc (-h | --help)
+
+Arguments are copied verbatim to the clipboard.
+The optional “-sel” switch lets you choose the selection
+(e.g. clipboard, primary).  All remaining tokens are treated
+as text to copy.
+""",
+        file=sys.stderr,
+    )
+
+
+def main(argv: List[str] | None = None) -> None:
+    argv = sys.argv[1:] if argv is None else argv
+
+    if not argv or argv[0] in ("-h", "--help"):
+        _print_help()
+        return
+
+    selection = "clipboard"
+    if argv[0] == "-sel":
+        if len(argv) < 2:
+            print("excc: -sel requires an argument", file=sys.stderr)
+            sys.exit(1)
+        selection = argv[1]
+        argv = argv[2:]
+
+    if not argv:
+        print("excc: nothing to copy", file=sys.stderr)
+        sys.exit(1)
+
+    text = " ".join(argv)
+    try:
+        copy_to_clipboard(text, selection)
+    except RuntimeError as exc:
+        print(f"excc: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
 
 
