@@ -1,0 +1,341 @@
+#!/usr/bin/env python3
+"""
+rename_no_whitespaces  –  portable filename-sanitiser and renamer
+================================================================
+
+TODO: WIP - should be better tested and polished.
+
+Purpose
+-------
+Rename one or many files so their names contain neither
+whitespaces nor “unsafe” characters.  By default every
+character listed in DEFAULT_CHANGE_CHARS (see below) is replaced
+with the replacement string (underscore by default).
+
+The script is completely self-contained – it needs nothing except
+Python ≥ 3.7 and (optionally) *git* when executed inside a git
+repository.  When imported it exposes the high-level helpers
+`sanitize_filename()` and `rename_path()`.
+
+Typical usage
+-------------
+Stand-alone:
+
+    ./rename_no_whitespaces -v *.pdf
+    ./rename_no_whitespaces -F -a ~/Downloads
+    ./rename_no_whitespaces -k'-.' -r'&' some\ weird\ file\ (v2).txt
+
+Library:
+
+    from rename_no_whitespaces import sanitize_filename, rename_path
+    new_name = sanitize_filename("File name (β).txt", ascii_only=True)
+    rename_path("/tmp", new_name, git_aware=True)
+
+Run “./rename_no_whitespaces -h” for the full CLI reference.
+"""
+from __future__ import annotations
+
+import argparse
+import os
+import re
+import subprocess
+import sys
+import unicodedata
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Iterable, List, Optional
+
+# --------------------------------------------------------------------------- #
+# Configuration                                                               #
+# --------------------------------------------------------------------------- #
+
+DEFAULT_CHANGE_CHARS = r" \t\n\r\f\v()[]{}<>\"'`~!@#$%^&*+=|\\;:,?"
+DEFAULT_REPLACEMENT = "_"
+
+
+# --------------------------------------------------------------------------- #
+# Helper dataclass                                                            #
+# --------------------------------------------------------------------------- #
+
+@dataclass
+class Options:
+    replacement: str = DEFAULT_REPLACEMENT
+    ascii_only: bool = False
+    change_chars: str = DEFAULT_CHANGE_CHARS
+    force: bool = False
+    fallback: bool = False
+    verbose: bool = False
+    interactive: bool = False
+
+    # Derived regex pattern – compiled once
+    def pattern(self) -> re.Pattern:
+        escaped = re.escape(self.change_chars)
+        return re.compile(f"[{escaped}]+")
+
+
+# --------------------------------------------------------------------------- #
+# Logging helpers                                                             #
+# --------------------------------------------------------------------------- #
+
+def _log(level: str, msg: str, verbose: bool = False) -> None:
+    if level != "INFO" or verbose:
+        print(f"{level}: {msg}", file=sys.stderr)
+
+
+def info(msg: str, opts: Options) -> None:
+    _log("INFO", msg, opts.verbose)
+
+
+def error(msg: str) -> None:
+    _log("ERROR", msg)
+
+
+# --------------------------------------------------------------------------- #
+# Core sanitising logic                                                       #
+# --------------------------------------------------------------------------- #
+
+def _ascii_fold(text: str) -> str:
+    """Return *text* converted to plain ASCII (best effort)."""
+    nfkd = unicodedata.normalize("NFKD", text)
+    return nfkd.encode("ascii", "ignore").decode("ascii")
+
+
+def sanitize_filename(
+    name: str,
+    *,
+    opts: Options,
+) -> str:
+    """
+    Return *name* with all disallowed characters replaced.
+
+    Multiple consecutive replacements collapse into a single occurrence.
+    """
+    original = name
+    if opts.ascii_only:
+        name = _ascii_fold(name)
+
+    name = opts.pattern().sub(opts.replacement, name)
+
+    # collapse duplicate replacement strings
+    if len(opts.replacement) == 1:
+        rep = re.escape(opts.replacement)
+        name = re.sub(f"{rep}+", opts.replacement, name)
+
+    # do not allow leading / trailing replacement
+    name = name.strip(opts.replacement)
+
+    if not name:
+        # Fallback to underscore if name became empty
+        name = opts.replacement
+
+    info(f"sanitised '{original}' -> '{name}'", opts)
+    return name
+
+
+# --------------------------------------------------------------------------- #
+# Renaming helpers                                                            #
+# --------------------------------------------------------------------------- #
+
+def _inside_git_repo(path: Path) -> bool:
+    try:
+        subprocess.run(
+            ["git", "-C", str(path), "rev-parse", "--is-inside-work-tree"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=True,
+        )
+        return True
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return False
+
+
+def _unique_destination(dest: Path) -> Path:
+    stem, suffix = dest.stem, dest.suffix
+    counter = 1
+    while dest.exists():
+        dest = dest.with_name(f"{stem}_{counter}{suffix}")
+        counter += 1
+    return dest
+
+
+def rename_path(path: Path, new_name: str, *, opts: Options) -> None:
+    """Rename *path* to *new_name* observing the user options."""
+    dest = path.with_name(new_name)
+
+    if dest.exists():
+        if opts.force:
+            info(f"overwriting existing '{dest}'", opts)
+            if dest.is_dir():
+                # Directory overwrite – remove then move
+                dest.rmdir()
+        elif opts.fallback:
+            dest = _unique_destination(dest)
+            info(f"destination exists, using fallback '{dest.name}'", opts)
+        else:
+            error(f"destination already exists: {dest}")
+            return
+
+    # Perform rename – git aware
+    if _inside_git_repo(path.parent):
+        cmd = ["git", "mv", str(path), str(dest)]
+        info(" ".join(cmd), opts)
+        try:
+            subprocess.run(cmd, check=True)
+        except subprocess.CalledProcessError as exc:
+            error(f"git mv failed: {exc}")
+    else:
+        try:
+            path.rename(dest)
+        except OSError as exc:
+            error(f"rename failed: {exc}")
+
+
+# --------------------------------------------------------------------------- #
+# CLI                                                                         #
+# --------------------------------------------------------------------------- #
+
+def _parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Rename files removing whitespaces / special characters.",
+    )
+    parser.add_argument(
+        "paths",
+        metavar="PATH",
+        nargs="+",
+        help="files or directories to process (directories are walked non-recursively)",
+    )
+    parser.add_argument(
+        "-a",
+        "--ascii",
+        action="store_true",
+        help="force ASCII – strip diacritics & non-ASCII chars",
+    )
+    parser.add_argument(
+        "-k",
+        "--keep",
+        metavar="CHARS",
+        help="characters to *keep* (remove them from change list)",
+    )
+    parser.add_argument(
+        "-r",
+        "--rename",
+        metavar="CHARS",
+        help="additional characters to rename",
+    )
+    parser.add_argument(
+        "-L",
+        "--change-list",
+        metavar="CHARS",
+        help="set exactly the list of characters to rename",
+    )
+    parser.add_argument(
+        "-d",
+        "--replacement",
+        default=DEFAULT_REPLACEMENT,
+        help=f"string used as replacement (default '{DEFAULT_REPLACEMENT}')",
+    )
+    parser.add_argument(
+        "-f",
+        "--force",
+        action="store_true",
+        help="overwrite existing destination files",
+    )
+    parser.add_argument(
+        "-F",
+        "--fallback",
+        action="store_true",
+        help="append numeric suffix if destination exists",
+    )
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="verbose output",
+    )
+    parser.add_argument(
+        "-i",
+        "--interactive",
+        action="store_true",
+        help="ask before every rename (y/n/e[dit])",
+    )
+    return parser.parse_args(argv)
+
+
+def _collect_file_paths(paths: Iterable[str]) -> List[Path]:
+    collected: List[Path] = []
+    for p in paths:
+        path = Path(p)
+        if path.is_dir():
+            collected.extend(child for child in path.iterdir() if child.is_file())
+        else:
+            collected.append(path)
+    return collected
+
+
+def _ask_user(old: str, new: str) -> Optional[str]:
+    while True:
+        sys.stderr.write(f"Rename '{old}' -> '{new}' ? [y/n/e] ")
+        sys.stderr.flush()
+        choice = sys.stdin.readline().strip().lower()
+        if choice == "y":
+            return new
+        if choice == "n":
+            return None
+        if choice == "e":
+            sys.stderr.write("Enter new name: ")
+            sys.stderr.flush()
+            new = sys.stdin.readline().strip()
+            return new or None
+
+
+def main(argv: Optional[List[str]] = None) -> None:
+    args = _parse_args(argv)
+
+    # Build options
+    change_chars = (
+        args.change_list
+        if args.change_list is not None
+        else DEFAULT_CHANGE_CHARS
+    )
+    if args.keep:
+        change_chars = "".join(ch for ch in change_chars if ch not in args.keep)
+    if args.rename:
+        change_chars += "".join(ch for ch in args.rename if ch not in change_chars)
+
+    opts = Options(
+        replacement=args.replacement,
+        ascii_only=args.ascii,
+        change_chars=change_chars,
+        force=args.force,
+        fallback=args.fallback,
+        verbose=args.verbose,
+        interactive=args.interactive,
+    )
+
+    # Validate mutual exclusivity
+    if opts.force and opts.fallback:
+        error("options --force and --fallback are mutually exclusive")
+        sys.exit(1)
+
+    for path in _collect_file_paths(args.paths):
+        if not path.exists():
+            error(f"no such file: {path}")
+            continue
+        new_name = sanitize_filename(path.name, opts=opts)
+
+        if new_name == path.name:
+            info(f"no change needed for '{path.name}'", opts)
+            continue
+
+        if opts.interactive:
+            answer = _ask_user(path.name, new_name)
+            if answer is None:
+                info("skipped", opts)
+                continue
+            new_name = answer
+
+        rename_path(path, new_name, opts=opts)
+
+
+if __name__ == "__main__":
+    main()
