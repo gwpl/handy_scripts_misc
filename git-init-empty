@@ -1,0 +1,9 @@
+#!/bin/bash
+
+# TODO: script that
+# * without parameters makes in current directory
+# * with one parameter make it in pointed directory
+# what:
+# makes new fresh empty git repository (git init)
+# and creates first frest empty (git commit --allow-empty -m init) "init" commit
+# with empty author and commiter "nobody" and email "nobody@nowhere" 
