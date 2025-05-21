@@ -1,9 +1,100 @@
-#!/bin/bash
+#!/usr/bin/env bash
+#
+# git-init-empty - create a fresh Git repository and start it with a single
+#                  empty "init" commit authored by "nobody <nobody@nowhere>".
+#
+# Usage:
+#   git-init-empty [DIRECTORY] [-q|--quiet] [-h|--help]
+#
+# If DIRECTORY is omitted the current directory is used. When provided the
+# directory will be created if it does not yet exist. After initialising the
+# repository the script adds an empty commit with the message "init" so that
+# a new branch has a first baseline revision straight away.
+#
+# The commit is made with the author/committer set to:
+#   name : nobody
+#   email: nobody@nowhere
+#
+# Exit codes:
+#   0  success
+#   1  invalid usage
+#   2  directory already contains Git repository
+#   3  git is not available
+#
+# Examples:
+#   git-init-empty              # initialise the current directory
+#   git-init-empty my/project   # create directory and initialise it
+#   git-init-empty -q new/repo  # same as above but run quietly
+#
+# This script is intentionally minimal so it can be copied around quickly
+# but it still follows good shell-scripting practices: strict error handling,
+# helpful messages, and POSIX-compatible option parsing.
+#
 
-# TODO: script that
-# * without parameters makes in current directory
-# * with one parameter make it in pointed directory
-# what:
-# makes new fresh empty git repository (git init)
-# and creates first frest empty (git commit --allow-empty -m init) "init" commit
-# with empty author and commiter "nobody" and email "nobody@nowhere" 
+set -euo pipefail
+
+print_help() {
+  grep -E '^#( |$)' "$0" | sed -E 's/^# ?//'
+}
+
+quiet=false
+target_dir=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help)
+      print_help
+      exit 0
+      ;;
+    -q|--quiet)
+      quiet=true
+      shift
+      ;;
+    -*)
+      echo "Unknown option: $1" >&2
+      print_help
+      exit 1
+      ;;
+    *)
+      if [[ -z "$target_dir" ]]; then
+        target_dir="$1"
+        shift
+      else
+        echo "ERROR: Only one positional DIRECTORY argument allowed." >&2
+        exit 1
+      fi
+      ;;
+  esac
+done
+
+# default to current directory
+if [[ -z "$target_dir" ]]; then
+  target_dir="."
+fi
+
+# ensure directory exists (unless it's ".")
+if [[ "$target_dir" != "." ]]; then
+  mkdir -p -- "$target_dir"
+fi
+
+cd -- "$target_dir"
+
+if ! command -v git >/dev/null 2>&1; then
+  echo "ERROR: git command not found." >&2
+  exit 3
+fi
+
+if [[ -d .git ]]; then
+  echo "ERROR: Directory '$PWD' is already a Git repository." >&2
+  exit 2
+fi
+
+git init ${quiet:+-q}
+
+GIT_AUTHOR_NAME="nobody" \
+GIT_AUTHOR_EMAIL="nobody@nowhere" \
+GIT_COMMITTER_NAME="nobody" \
+GIT_COMMITTER_EMAIL="nobody@nowhere" \
+git commit --allow-empty -m "init" ${quiet:+-q}
+
+$quiet || echo "Repository initialised at '$PWD'"
