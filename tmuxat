@@ -16,19 +16,42 @@ if [ ${#sessions[@]} -eq 0 ]; then
     exit 1
 fi
 
-echo "Available tmux sessions:"
-for i in "${!sessions[@]}"; do
-    printf "  %d) %s\n" "$((i+1))" "${sessions[$i]}"
-done
+# Intelligent session selector: sk > fzf > select > manual
+if command -v sk >/dev/null 2>&1; then
+    # Use sk (skim)
+    session_name="$(printf '%s\n' "${sessions[@]}" | sk --prompt='tmux session> ')"
+elif command -v fzf >/dev/null 2>&1; then
+    # Use fzf
+    session_name="$(printf '%s\n' "${sessions[@]}" | fzf --prompt='tmux session> ')"
+elif command -v select >/dev/null 2>&1; then
+    # Use select (for POSIX sh)
+    echo "Select a session:"
+    select session_name in "${sessions[@]}"; do
+        [ -n "$session_name" ] && break
+        echo "Invalid selection."
+    done
+else
+    # Fallback: manual number input
+    echo "Available tmux sessions:"
+    for i in "${!sessions[@]}"; do
+        printf "  %d) %s\n" "$((i+1))" "${sessions[$i]}"
+    done
 
-echo -n "Select session number to attach: "
-read -r selection
+    echo -n "Select session number to attach: "
+    read -r selection
 
-if ! [[ "$selection" =~ ^[0-9]+$ ]] || [ "$selection" -lt 1 ] || [ "$selection" -gt "${#sessions[@]}" ]; then
-    echo "Invalid selection."
-    exit 2
+    if ! [[ "$selection" =~ ^[0-9]+$ ]] || [ "$selection" -lt 1 ] || [ "$selection" -gt "${#sessions[@]}" ]; then
+        echo "Invalid selection."
+        exit 2
+    fi
+
+    session_name="${sessions[$((selection-1))]}"
 fi
 
-session_name="${sessions[$((selection-1))]}"
+if [ -z "$session_name" ]; then
+    echo "No session selected."
+    exit 3
+fi
+
 echo "Attaching to session: $session_name"
 exec tmux attach -t "$session_name"
