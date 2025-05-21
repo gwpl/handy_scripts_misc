@@ -18,7 +18,7 @@
 # Exit codes:
 #   0  success
 #   1  invalid usage
-#   2  directory already contains Git repository
+#   2  directory already contains Git repository with history
 #   3  git is not available
 #
 # Examples:
@@ -85,11 +85,16 @@ if ! command -v git >/dev/null 2>&1; then
 fi
 
 if [[ -d .git ]]; then
-  echo "ERROR: Directory '$PWD' is already a Git repository." >&2
-  exit 2
+  # Already a Git repository – allow proceeding only when it has no commits yet.
+  if git rev-parse --quiet --verify HEAD >/dev/null; then
+    echo "ERROR: Directory '$PWD' is already a Git repository with history." >&2
+    exit 2
+  else
+    [[ $quiet == true ]] || echo "Existing empty repository detected."
+  fi
+else
+  git init ${quiet:+-q}
 fi
-
-git init ${quiet:+-q}
 
 GIT_AUTHOR_NAME="nobody" \
 GIT_AUTHOR_EMAIL="nobody@nowhere" \
