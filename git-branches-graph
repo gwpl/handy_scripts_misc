@@ -48,17 +48,24 @@ import sys
 from pathlib import Path
 from typing import Dict, Iterable, List, Set, Tuple
 
+# Repository path selected by --repo option; set in main()
+GIT_REPO: Path | None = None
+
 # --------------------------------------------------------------------------- #
 # Helpers                                                                     #
 # --------------------------------------------------------------------------- #
 
 
 def run_git(*args: str) -> str:
-    """Run a git command and return stdout stripped."""
+    """Run a git command (optionally inside --repo path) and return stdout stripped."""
+    cmd = ["git"]
+    if GIT_REPO is not None:
+        cmd += ["-C", str(GIT_REPO)]
+    cmd += list(args)
     try:
-        out = subprocess.check_output(["git", *args], text=True)
+        out = subprocess.check_output(cmd, text=True)
     except subprocess.CalledProcessError as exc:
-        sys.stderr.write(f"error: git {' '.join(args)} failed: {exc}\n")
+        sys.stderr.write(f"error: {' '.join(cmd)} failed: {exc}\n")
         sys.exit(2)
     return out.strip()
 
@@ -114,8 +121,20 @@ def map_branches_to_commits(branches: Iterable[str]) -> Dict[str, str]:
     return {br: run_git("rev-parse", br) for br in branches}
 
 
-def common_ancestor(a_commit: str, b_commit: str) -> str:
-    return run_git("merge-base", a_commit, b_commit)
+def common_ancestor(a_commit: str, b_commit: str) -> str | None:
+    """
+    Return the merge-base of two commits or None if the commits have no
+    common ancestor (git exits with status 1 in that case).
+    """
+    cmd: List[str] = ["git"]
+    if GIT_REPO is not None:
+        cmd += ["-C", str(GIT_REPO)]
+    cmd += ["merge-base", a_commit, b_commit]
+    try:
+        return subprocess.check_output(cmd, text=True).strip()
+    except subprocess.CalledProcessError:
+        # unrelated histories
+        return None
 
 
 def build_graph(branch_commits: Dict[str, str]) -> Tuple[Set[Tuple[str, str]], Dict[str, str]]:
@@ -132,6 +151,10 @@ def build_graph(branch_commits: Dict[str, str]) -> Tuple[Set[Tuple[str, str]], D
 
     for (br1, sha1), (br2, sha2) in itertools.combinations(branch_commits.items(), 2):
         anc = common_ancestor(sha1, sha2)
+        if not anc:
+            # Branch tips are from unrelated histories; skip.
+            continue
+
         # choose label for ancestor if not already chosen
         node_labels.setdefault(anc, abbreviate_commit(anc))
 
@@ -189,6 +212,12 @@ def parse_args(argv: List[str] | None = None) -> argparse.Namespace:
         help="Read branch names from standard input (one per line, accepts `git branch` raw output).",
     )
     p.add_argument(
+        "-r",
+        "--repo",
+        default=".",
+        help="Path to a git repository to inspect (default: current directory).",
+    )
+    p.add_argument(
         "-f",
         "--format",
         choices=("mermaid", "dot", "csv"),
@@ -200,6 +229,21 @@ def parse_args(argv: List[str] | None = None) -> argparse.Namespace:
 
 def main(argv: List[str] | None = None) -> None:
     args = parse_args(argv)
+
+    # If the first positional argument looks like a directory that is a git
+    # repository, treat it as the --repo path (for convenience).
+    if args.repo == "." and args.branches:
+        candidate_repo = Path(args.branches[0]).expanduser().resolve()
+        if candidate_repo.is_dir() and (candidate_repo / ".git").exists():
+            args.repo = str(candidate_repo)
+            args.branches = args.branches[1:]
+
+    global GIT_REPO
+    GIT_REPO = Path(args.repo).expanduser().resolve()
+    if not GIT_REPO.exists():
+        sys.stderr.write(f"fatal: path '{GIT_REPO}' does not exist\n")
+        sys.exit(1)
+
     ensure_git_repo()
 
     branches = collect_branches(args.stdin, args.branches)
