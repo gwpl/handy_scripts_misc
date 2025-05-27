@@ -1,0 +1,220 @@
+#!/usr/bin/env python3
+"""
+git_branches_graph.py
+---------------------
+
+Visualise relationships between Git branches.
+
+The script:
+
+1. Verifies it is executed inside a Git working tree.
+2. Collects branch names either automatically (`git branch --format '%(refname:short)'`)
+   or from explicit user-supplied lists (CLI parameters or standard input).
+   Leading markers produced by `git branch` such as “* ” or “+ ” are stripped.
+3. For every pair of branches it finds their *nearest common ancestor* via
+   `git merge-base`.  
+   • If the ancestor **commit** is pointed-to by an existing branch, that branch
+     name is used as the node label.  
+   • Otherwise the commit is referred to by its shortest unique abbreviation
+     (`git rev-parse --short=<n>` is attempted, falling back to 7 chars).
+4. Produces a simple *directed* graph where each common-ancestor node points to
+   the two (or more) branch tips that diverge from it.
+5. Supports three output formats selectable with `--format`:
+     • mermaid  (default)  –  “graph LR; A --> B;”
+     • dot/graphviz        –  “digraph { A -> B }”
+     • csv                 –  “from,to”
+6. Prints to STDOUT, making it easy to pipe into `dot -Tpng`, `mmdc`, etc.
+
+Example
+-------
+
+    # Auto-detect local branches and print Mermaid
+    ./git_branches_graph.py
+
+    # Provide explicit branch names
+    ./git_branches_graph.py feature/login bugfix/email --format dot
+
+    # Read branch names from STDIN (could be `git branch` output)
+    git branch | ./git_branches_graph.py --stdin -f csv
+"""
+from __future__ import annotations
+
+import argparse
+import itertools
+import os
+import shlex
+import subprocess
+import sys
+from pathlib import Path
+from typing import Dict, Iterable, List, Set, Tuple
+
+# --------------------------------------------------------------------------- #
+# Helpers                                                                     #
+# --------------------------------------------------------------------------- #
+
+
+def run_git(*args: str) -> str:
+    """Run a git command and return stdout stripped."""
+    try:
+        out = subprocess.check_output(["git", *args], text=True)
+    except subprocess.CalledProcessError as exc:
+        sys.stderr.write(f"error: git {' '.join(args)} failed: {exc}\n")
+        sys.exit(2)
+    return out.strip()
+
+
+def ensure_git_repo() -> None:
+    """Abort if we are not inside a git repository."""
+    try:
+        inside = run_git("rev-parse", "--is-inside-work-tree")
+    except SystemExit:
+        raise
+    except Exception:
+        inside = "false"
+
+    if inside != "true":
+        sys.stderr.write("fatal: not a git repository (or any of the parent directories)\n")
+        sys.exit(1)
+
+
+def strip_branch_marker(name: str) -> str:
+    """Remove markers such as '* ' or '+ ' added by `git branch` output."""
+    return name.lstrip("*+ ").strip()
+
+
+def abbreviate_commit(commit: str) -> str:
+    """Return shortest unique abbreviation; fall back to 7 chars."""
+    try:
+        return run_git("rev-parse", "--short", commit)
+    except Exception:
+        return commit[:7]
+
+
+# --------------------------------------------------------------------------- #
+# Graph computation                                                           #
+# --------------------------------------------------------------------------- #
+
+
+def collect_branches(use_stdin: bool, explicit: List[str]) -> List[str]:
+    if use_stdin:
+        names = [strip_branch_marker(line) for line in sys.stdin.read().splitlines() if line.strip()]
+    elif explicit:
+        names = [strip_branch_marker(n) for n in explicit]
+    else:
+        # All local branches
+        raw = run_git("branch", "--format=%(refname:short)").splitlines()
+        names = [strip_branch_marker(r) for r in raw if r.strip()]
+    if not names:
+        sys.stderr.write("error: no branches detected / specified\n")
+        sys.exit(1)
+    return sorted(set(names))
+
+
+def map_branches_to_commits(branches: Iterable[str]) -> Dict[str, str]:
+    return {br: run_git("rev-parse", br) for br in branches}
+
+
+def common_ancestor(a_commit: str, b_commit: str) -> str:
+    return run_git("merge-base", a_commit, b_commit)
+
+
+def build_graph(branch_commits: Dict[str, str]) -> Tuple[Set[Tuple[str, str]], Dict[str, str]]:
+    """
+    Returns:
+        edges: Set of (parent, child) node labels
+        node_labels: mapping commit -> chosen label
+    """
+    # candidate label: branch name if branch tip equals commit
+    node_labels: Dict[str, str] = {sha: br for br, sha in branch_commits.items()}
+
+    edges: Set[Tuple[str, str]] = set()
+    commits = list(branch_commits.values())
+
+    for (br1, sha1), (br2, sha2) in itertools.combinations(branch_commits.items(), 2):
+        anc = common_ancestor(sha1, sha2)
+        # choose label for ancestor if not already chosen
+        node_labels.setdefault(anc, abbreviate_commit(anc))
+
+        # Add edges (ancestor -> branch1) and (ancestor -> branch2)
+        edges.add((node_labels[anc], node_labels[sha1]))
+        edges.add((node_labels[anc], node_labels[sha2]))
+
+    return edges, node_labels
+
+
+# --------------------------------------------------------------------------- #
+# Output renderers                                                            #
+# --------------------------------------------------------------------------- #
+
+
+def render_mermaid(edges: Set[Tuple[str, str]]) -> str:
+    lines = ["graph LR"]
+    for parent, child in sorted(edges):
+        lines.append(f"    {shlex.quote(parent)} --> {shlex.quote(child)}")
+    return "\n".join(lines)
+
+
+def render_dot(edges: Set[Tuple[str, str]]) -> str:
+    lines = ["digraph G {"]
+    for parent, child in sorted(edges):
+        lines.append(f'    "{parent}" -> "{child}";')
+    lines.append("}")
+    return "\n".join(lines)
+
+
+def render_csv(edges: Set[Tuple[str, str]]) -> str:
+    lines = ["from,to"]
+    lines += [f"{parent},{child}" for parent, child in sorted(edges)]
+    return "\n".join(lines)
+
+
+# --------------------------------------------------------------------------- #
+# CLI                                                                         #
+# --------------------------------------------------------------------------- #
+
+
+def parse_args(argv: List[str] | None = None) -> argparse.Namespace:
+    p = argparse.ArgumentParser(
+        description="Produce a simple graph (Mermaid, Graphviz, CSV) showing common ancestors of Git branches."
+    )
+    p.add_argument(
+        "branches",
+        nargs="*",
+        help="Branch names to include. If omitted all local branches are used.",
+    )
+    p.add_argument(
+        "-s",
+        "--stdin",
+        action="store_true",
+        help="Read branch names from standard input (one per line, accepts `git branch` raw output).",
+    )
+    p.add_argument(
+        "-f",
+        "--format",
+        choices=("mermaid", "dot", "csv"),
+        default="mermaid",
+        help="Output format (default: mermaid).",
+    )
+    return p.parse_args(argv)
+
+
+def main(argv: List[str] | None = None) -> None:
+    args = parse_args(argv)
+    ensure_git_repo()
+
+    branches = collect_branches(args.stdin, args.branches)
+    branch_commits = map_branches_to_commits(branches)
+    edges, _ = build_graph(branch_commits)
+
+    if args.format == "mermaid":
+        out = render_mermaid(edges)
+    elif args.format == "dot":
+        out = render_dot(edges)
+    else:
+        out = render_csv(edges)
+
+    print(out)
+
+
+if __name__ == "__main__":
+    main()
