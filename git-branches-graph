@@ -47,6 +47,7 @@ import subprocess
 import sys
 from pathlib import Path
 from typing import Dict, Iterable, List, Set, Tuple
+from collections import deque
 
 # Repository path selected by --repo option; set in main()
 GIT_REPO: Path | None = None
@@ -139,30 +140,81 @@ def common_ancestor(a_commit: str, b_commit: str) -> str | None:
 
 def build_graph(branch_commits: Dict[str, str]) -> Tuple[Set[Tuple[str, str]], Dict[str, str]]:
     """
+    Discover all common-ancestor vertices (recursively) and build the full edge
+    set. New ancestors discovered during the process are themselves compared
+    with every other vertex until no new vertices appear.
     Returns:
-        edges: Set of (parent, child) node labels
-        node_labels: mapping commit -> chosen label
+        edges: Set[(parent_label, child_label)]
+        node_labels: Map commit_sha -> chosen label
     """
-    # candidate label: branch name if branch tip equals commit
+    # Initial labels (branch names for tips)
     node_labels: Dict[str, str] = {sha: br for br, sha in branch_commits.items()}
+    vertices: List[str] = list(branch_commits.values())  # queue-like list
 
     edges: Set[Tuple[str, str]] = set()
-    commits = list(branch_commits.values())
+    idx = 0  # index of vertex to start pairing from
+    while idx < len(vertices):
+        current_subset = vertices[idx:]
+        idx = len(vertices)  # next iteration will start where new vertices begin
 
-    for (br1, sha1), (br2, sha2) in itertools.combinations(branch_commits.items(), 2):
-        anc = common_ancestor(sha1, sha2)
-        if not anc:
-            # Branch tips are from unrelated histories; skip.
-            continue
+        # Compare every unordered pair within the current subset and all previous vertices
+        for sha1 in vertices:
+            for sha2 in current_subset:
+                if sha1 >= sha2:  # ensure each unordered pair processed once
+                    continue
+                anc = common_ancestor(sha1, sha2)
+                if not anc:
+                    continue  # unrelated histories
 
-        # choose label for ancestor if not already chosen
-        node_labels.setdefault(anc, abbreviate_commit(anc))
+                # register ancestor label (once)
+                if anc not in node_labels:
+                    node_labels[anc] = abbreviate_commit(anc)
+                    vertices.append(anc)  # newly discovered, will be processed in later rounds
 
-        # Add edges (ancestor -> branch1) and (ancestor -> branch2)
-        edges.add((node_labels[anc], node_labels[sha1]))
-        edges.add((node_labels[anc], node_labels[sha2]))
+                # add edges ancestor -> child
+                edges.add((node_labels[anc], node_labels[sha1]))
+                edges.add((node_labels[anc], node_labels[sha2]))
 
     return edges, node_labels
+
+
+# --------------------------------------------------------------------------- #
+# Transitive reduction                                                        #
+# --------------------------------------------------------------------------- #
+
+
+def transitive_reduction(edges: Set[Tuple[str, str]]) -> Set[Tuple[str, str]]:
+    """
+    Perform transitive reduction on a DAG represented by *edges*.
+    Removes every edge (u, v) for which an alternative path u ~~> v exists.
+    """
+    # Build adjacency list
+    adj: Dict[str, Set[str]] = {}
+    for u, v in edges:
+        adj.setdefault(u, set()).add(v)
+
+    def reachable(src: str, dst: str, skip_edge: Tuple[str, str]) -> bool:
+        """DFS reachability ignoring *skip_edge*."""
+        stack = [src]
+        seen = {src}
+        while stack:
+            u = stack.pop()
+            for w in adj.get(u, ()):
+                if (u, w) == skip_edge:
+                    continue
+                if w == dst:
+                    return True
+                if w not in seen:
+                    seen.add(w)
+                    stack.append(w)
+        return False
+
+    reduced: Set[Tuple[str, str]] = set()
+    for edge in edges:
+        u, v = edge
+        if not reachable(u, v, edge):
+            reduced.add(edge)
+    return reduced
 
 
 # --------------------------------------------------------------------------- #
@@ -274,6 +326,7 @@ def main(argv: List[str] | None = None) -> None:
     branches = collect_branches(args.stdin, args.branches)
     branch_commits = map_branches_to_commits(branches)
     edges, _ = build_graph(branch_commits)
+    edges = transitive_reduction(edges)
 
     def write_text(text: str) -> None:
         if args.output:
