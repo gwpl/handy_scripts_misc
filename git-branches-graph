@@ -171,9 +171,11 @@ def build_graph(branch_commits: Dict[str, str]) -> Tuple[Set[Tuple[str, str]], D
                     node_labels[anc] = abbreviate_commit(anc)
                     vertices.append(anc)  # newly discovered, will be processed in later rounds
 
-                # add edges ancestor -> child
-                edges.add((node_labels[anc], node_labels[sha1]))
-                edges.add((node_labels[anc], node_labels[sha2]))
+                # add edges ancestor -> child (skip self-referential edges)
+                if node_labels[anc] != node_labels[sha1]:
+                    edges.add((node_labels[anc], node_labels[sha1]))
+                if node_labels[anc] != node_labels[sha2]:
+                    edges.add((node_labels[anc], node_labels[sha2]))
 
     return edges, node_labels
 
