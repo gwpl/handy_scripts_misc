@@ -1,57 +1,85 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #
-# tmuxat: Interactive tmux session selector and attacher.
+# tmuxa: Interactive tmux session selector and attacher.
 #
-# Lists open tmux session names (from `tmux ls`), presents them in a numbered menu,
-# and allows you to select one by number to launch `tmux attach -t "${tmuxsessionname}"`.
-# The session names are passed directly to `tmux a -t ${tmuxsessionname}`.
+# Lists active tmux sessions, lets you choose one (sk → fzf → select → manual),
+# then runs:
+#     tmux attach <flags> -t <selected-session>
+#
+# Usage examples:
+#   tmuxa            # equivalent to: tmux attach -t <session>
+#   tmuxa -t         # same as above
+#   tmuxa -dt        # tmux attach -dt <session>
+#   tmuxa -h|--help  # show this help
+#
+# Any flags supplied are forwarded to `tmux attach`.  If they do not already
+# include “-t/--target”, the flag “-t” is added automatically.
+set -euo pipefail
+IFS=$'\n\t'
 
-set -e
+print_help() {
+    # Print usage block above (lines 4-18)
+    sed -n '4,18p' "$0"
+}
 
-# Get list of tmux sessions
-mapfile -t sessions < <(tmux ls 2>/dev/null | awk -F: '{print $1}')
+# Select a tmux session and output its name
+select_session() {
+    local sessions=() session_name
+    mapfile -t sessions < <(tmux ls 2>/dev/null | awk -F: '{print $1}')
 
-if [ ${#sessions[@]} -eq 0 ]; then
-    echo "No tmux sessions found."
-    exit 1
-fi
-
-# Intelligent session selector: sk > fzf > select > manual
-if command -v sk >/dev/null 2>&1; then
-    # Use sk (skim)
-    session_name="$(printf '%s\n' "${sessions[@]}" | sk --prompt='tmux session> ')"
-elif command -v fzf >/dev/null 2>&1; then
-    # Use fzf
-    session_name="$(printf '%s\n' "${sessions[@]}" | fzf --prompt='tmux session> ')"
-elif command -v select >/dev/null 2>&1; then
-    # Use select (for POSIX sh)
-    echo "Select a session:"
-    select session_name in "${sessions[@]}"; do
-        [ -n "$session_name" ] && break
-        echo "Invalid selection."
-    done
-else
-    # Fallback: manual number input
-    echo "Available tmux sessions:"
-    for i in "${!sessions[@]}"; do
-        printf "  %d) %s\n" "$((i+1))" "${sessions[$i]}"
-    done
-
-    echo -n "Select session number to attach: "
-    read -r selection
-
-    if ! [[ "$selection" =~ ^[0-9]+$ ]] || [ "$selection" -lt 1 ] || [ "$selection" -gt "${#sessions[@]}" ]; then
-        echo "Invalid selection."
-        exit 2
+    if (( ${#sessions[@]} == 0 )); then
+        echo "No tmux sessions found." >&2
+        exit 1
     fi
 
-    session_name="${sessions[$((selection-1))]}"
-fi
+    if command -v sk >/dev/null 2>&1; then
+        session_name="$(printf '%s\n' "${sessions[@]}" | sk --prompt='tmux session> ')"
+    elif command -v fzf >/dev/null 2>&1; then
+        session_name="$(printf '%s\n' "${sessions[@]}" | fzf --prompt='tmux session> ')"
+    else
+        echo "Select a session:"
+        select session_name in "${sessions[@]}"; do
+            [[ -n $session_name ]] && break
+            echo "Invalid selection."
+        done
+    fi
 
-if [ -z "$session_name" ]; then
-    echo "No session selected."
-    exit 3
-fi
+    if [[ -z $session_name ]]; then
+        echo "No session selected." >&2
+        exit 3
+    fi
+    printf '%s\n' "$session_name"
+}
 
-echo "Attaching to session: $session_name"
-exec tmux attach -t "$session_name"
+main() {
+    local attach_flags=("$@")
+
+    # Help handling
+    if [[ ${#attach_flags[@]} -gt 0 ]]; then
+        case ${attach_flags[0]} in
+            -h|--help|help)
+                print_help
+                exit 0
+            ;;
+        esac
+    fi
+
+    # Default to "-t" when no flags given
+    if [[ ${#attach_flags[@]} -eq 0 ]]; then
+        attach_flags=("-t")
+    fi
+
+    # Ensure -t/--target present
+    local flags_combined="${attach_flags[*]}"
+    if [[ $flags_combined != *"-t"* && $flags_combined != *"--target"* ]]; then
+        attach_flags+=("-t")
+    fi
+
+    local session_name
+    session_name="$(select_session)"
+
+    echo "Attaching to session: $session_name"
+    exec tmux attach "${attach_flags[@]}" "$session_name"
+}
+
+main "$@"
