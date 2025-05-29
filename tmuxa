@@ -69,17 +69,32 @@ main() {
         attach_flags=("-t")
     fi
 
-    # Ensure -t/--target present
-    local flags_combined="${attach_flags[*]}"
-    if [[ $flags_combined != *"-t"* && $flags_combined != *"--target"* ]]; then
-        attach_flags+=("-t")
-    fi
+    # Determine whether a target-session flag is already present.
+    local has_target_flag=false
+    local has_inline_target=false
+    for arg in "${attach_flags[@]}"; do
+        case "$arg" in
+            -t|--target) has_target_flag=true ;;
+            --target=*)  has_target_flag=true; has_inline_target=true ;;
+            -*t*)        has_target_flag=true ;;   # handles combined flags like “-dt”
+        esac
+    done
 
+    # Select a session interactively.
     local session_name
     session_name="$(select_session)"
 
     echo "Attaching to session: $session_name"
-    exec tmux attach "${attach_flags[@]}" "$session_name"
+
+    # Build and execute the final command.
+    if $has_target_flag; then
+        # If the target flag needs a value (e.g. “-t”, “-dt”), append the session
+        # name.  If the value was supplied inline (e.g. “--target=name”), the extra
+        # positional argument is harmlessly ignored.
+        exec tmux attach "${attach_flags[@]}" "$session_name"
+    else
+        exec tmux attach "${attach_flags[@]}" -t "$session_name"
+    fi
 }
 
 main "$@"
