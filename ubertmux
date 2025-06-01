@@ -1,0 +1,144 @@
+#!/usr/bin/env bash
+#
+# ubertmux
+#
+# ubertmux is tmux to access nested tmux clients,
+# running on default tmux server with default tmux config
+# having ubertmux config and server isolated.
+#
+# ubertmux command prefix is Ctrl+A (!).
+#
+# This script ensures that you can run a tmux “ubertmux” server with its own custom config,
+# completely isolated from your default tmux environment. By using a separate socket file,
+# we guarantee that even if your regular tmux server is already running (or you start it later),
+# ubertmux will use its own settings (e.g. Ctrl+A prefix) and never get “-f ignored” errors.
+#
+# Usage:
+#   1. Place this script somewhere in your PATH, e.g. ~/bin/ubertmux
+#   2. Make it executable: chmod +x ~/bin/ubertmux
+#   3. Run “ubertmux” to start or attach to your custom tmux server.
+#
+# What we’re doing:
+#   1. Verify that tmux is installed.
+#   2. Define variables for the custom config (~/.ubertmux.conf) and a dedicated socket (/tmp/ubertmux.sock).
+#   3. If the config doesn’t exist, create a minimal one that rebinds prefix to Ctrl+A.
+#   4. Check if a tmux server is already listening on our ubertmux socket:
+#        • If the socket file exists but no server is responding, remove the stale socket file.
+#   5. Launch tmux with “-f $UBERCONF -S $UBERSOCK new-session -A -s ubertmux”:
+#        • “-f” ensures that this new server will load our custom config.
+#        • “-S” points tmux to use a separate socket file, guaranteeing isolation from the default server.
+#        • “new-session -A -s ubertmux” creates or attaches to a session named “ubertmux” on that socket.
+#
+# By the end, you’ll have:
+#   • An “outer” tmux server (ubertmux) listening on a dedicated socket, using prefix Ctrl+A.
+#   • Within its panes, you can start your normal tmux clients (prefix Ctrl+B), with zero conflicts.
+#
+
+set -euo pipefail
+
+echo "🚀 Starting ubertmux setup..."
+
+############################################
+# 1. Ensure tmux is installed and runnable  #
+############################################
+
+if ! command -v tmux &>/dev/null; then
+    echo "❌ Error: tmux is not installed or not in PATH." >&2
+    echo "   Please install tmux first (e.g., apt install tmux, brew install tmux, etc.)." >&2
+    exit 1
+fi
+
+echo "✔ tmux found."
+
+############################################
+# 2. Define config file and socket paths  #
+############################################
+
+# Path to the custom ubertmux config
+UBERCONF="$HOME/.ubertmux.conf"
+
+# Path to a dedicated socket for the ubertmux server.
+# Using /tmp ensures it's not interfering with your default tmux socket.
+# If you share the machine with others, you could append your UID:
+#   UBERSOCK="/tmp/ubertmux_$(id -u).sock"
+UBERSOCK="/tmp/ubertmux.sock"
+
+echo "ℹ Ubertmux config will be: $UBERCONF"
+echo "ℹ Ubertmux socket will be: $UBERSOCK"
+
+###########################################################
+# 3. Create ~/.ubertmux.conf if it doesn’t already exist  #
+###########################################################
+
+if [[ ! -f "$UBERCONF" ]]; then
+    echo "✍ $UBERCONF not found. Creating a minimal ubertmux config..."
+
+    cat > "$UBERCONF" <<'EOF'
+# ~/.ubertmux.conf
+#
+# Minimal tmux config for ubertmux:
+#   • Change prefix to Ctrl+A
+#   • Unbind old prefix Ctrl+B
+#   • Make sure “send-prefix” is available so nested tmux can receive Ctrl+A if needed.
+
+set -g prefix C-a
+unbind C-b
+bind C-a send-prefix
+
+# (You may add more ubertmux-only bindings here if desired,
+#  such as status-line color changes, pane-navigation shortcuts, etc.)
+EOF
+
+    echo "✔ Created $UBERCONF."
+else
+    echo "✔ Found existing ubertmux config at $UBERCONF. Leaving it intact."
+fi
+
+##############################################################
+# 4. Handle stale socket if present but no tmux server alive #
+##############################################################
+
+if [[ -S "$UBERSOCK" ]]; then
+    echo "ℹ Found existing socket file at $UBERSOCK. Checking for a running ubertmux server..."
+
+    # Attempt to list sessions on that socket. If it fails with “connection refused” or “no server running”,
+    # we treat it as a stale socket and remove the file so tmux can recreate it cleanly.
+    if ! tmux -S "$UBERSOCK" ls &>/dev/null; then
+        echo "⚠ No tmux server responding on $UBERSOCK. Cleaning up stale socket file..."
+        rm -f "$UBERSOCK"
+        echo "✔ Removed stale socket."
+    else
+        echo "✔ A tmux server is already running on $UBERSOCK."
+    fi
+else
+    echo "ℹ No existing ubertmux socket detected. Will create a new server shortly."
+fi
+
+####################################################
+# 5. Launch (or attach) the ubertmux tmux session  #
+####################################################
+
+echo "🔧 Starting or attaching to the ubertmux tmux server..."
+echo "   Note: We use '-f $UBERCONF -S $UBERSOCK' to ensure a brand-new server (or attach to the right one)."
+echo "   This guarantees that your default tmux (on its own socket) will never load ~/.ubertmux.conf."
+echo
+
+# -f  : point to our ubertmux-specific config
+# -S  : use the dedicated socket (so it doesn't collide with default tmux)
+# new-session -A -s ubertmux:
+#        * -s ubertmux names the session “ubertmux”
+#        * -A        tells tmux: “If session exists, attach. Otherwise, create it.”
+tmux -f "$UBERCONF" -S "$UBERSOCK" new-session -A -s ubertmux
+
+# If tmux exits unexpectedly, the script will end here.
+#
+# After this, you are inside the ubertmux environment.  
+# Use Ctrl+A as your prefix.  
+# To split panes: Ctrl+A + " (horizontal) or Ctrl+A + % (vertical).  
+# Within each pane, you can run your default tmux (prefix Ctrl+B), attach to existing sessions, etc.
+#
+# If you exit or detach (Ctrl+A + d), you can resume later by running this same “ubertmux” script again.
+#
+# Enjoy your multi-layered tmux setup—outer (ubertmux) with Ctrl+A, inner (default) with Ctrl+B,
+# with zero risk of “-f <config> ignored” errors or keybinding collisions.
+#
