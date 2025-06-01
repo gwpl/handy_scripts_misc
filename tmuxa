@@ -51,6 +51,50 @@ select_session() {
     printf '%s\n' "$session_name"
 }
 
+# Detect tmux servers and allow selecting both server and session when multiple
+# servers are running.  Returns a string “server:session”.
+select_server_and_session() {
+    local servers=("$@")
+    local tmux_dir="/tmp/tmux-${UID}"
+    local items=()
+
+    # Build a list “server:session” for each server.
+    for server in "${servers[@]}"; do
+        local _sessions=()
+        local _sessions=()
+        if mapfile -t _sessions < <(tmux -S "${tmux_dir}/${server}" ls 2>/dev/null | awk -F: '{print $1}'); then
+            for session in "${_sessions[@]}"; do
+                items+=("${server}:${session}")
+            done
+        fi
+    done
+
+    if (( ${#items[@]} == 0 )); then
+        echo "No tmux sessions found." >&2
+        exit 1
+    fi
+
+    local choice=""
+    if command -v sk >/dev/null 2>&1; then
+        choice="$(printf '%s\n' "${items[@]}" | sk --prompt='tmux server:session> ')"
+    elif command -v fzf >/dev/null 2>&1; then
+        choice="$(printf '%s\n' "${items[@]}" | fzf --prompt='tmux server:session> ')"
+    else
+        echo "Select a server and session:"
+        select choice in "${items[@]}"; do
+            [[ -n $choice ]] && break
+            echo "Invalid selection."
+        done
+    fi
+
+    if [[ -z $choice ]]; then
+        echo "No selection made." >&2
+        exit 3
+    fi
+
+    printf '%s\n' "$choice"
+}
+
 main() {
     local attach_flags=("$@")
 
@@ -80,20 +124,40 @@ main() {
         esac
     done
 
-    # Select a session interactively.
-    local session_name
-    session_name="$(select_session)"
+    # Detect running tmux servers (socket files inside /tmp/tmux-$UID).
+    local tmux_dir="/tmp/tmux-${UID}"
+    local server_socket=""
+    local session_name=""
+    local _servers=()
 
-    echo "Attaching to session: $session_name"
+    if [[ -d $tmux_dir ]]; then
+        mapfile -t _servers < <(find "$tmux_dir" -maxdepth 1 -type s -printf "%f\n" 2>/dev/null)
+    fi
 
-    # Build and execute the final command.
-    if $has_target_flag; then
-        # If the target flag needs a value (e.g. “-t”, “-dt”), append the session
-        # name.  If the value was supplied inline (e.g. “--target=name”), the extra
-        # positional argument is harmlessly ignored.
-        exec tmux attach "${attach_flags[@]}" "$session_name"
+    if (( ${#_servers[@]} <= 1 )); then
+        session_name="$(select_session)"
     else
-        exec tmux attach "${attach_flags[@]}" -t "$session_name"
+        local selection
+        selection="$(select_server_and_session "${_servers[@]}")"
+        server_socket="${selection%%:*}"
+        session_name="${selection#*:}"
+    fi
+
+    echo "Attaching to session: ${server_socket:+${server_socket}:}$session_name"
+
+    # Build and execute the final command, adding -S when needed.
+    if $has_target_flag; then
+        if [[ -n $server_socket ]]; then
+            exec tmux -S "${tmux_dir}/${server_socket}" attach "${attach_flags[@]}" "$session_name"
+        else
+            exec tmux attach "${attach_flags[@]}" "$session_name"
+        fi
+    else
+        if [[ -n $server_socket ]]; then
+            exec tmux -S "${tmux_dir}/${server_socket}" attach "${attach_flags[@]}" -t "$session_name"
+        else
+            exec tmux attach "${attach_flags[@]}" -t "$session_name"
+        fi
     fi
 }
 
