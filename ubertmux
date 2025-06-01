@@ -58,13 +58,19 @@ echo "✔ tmux found."
 UBERCONF="$HOME/.ubertmux.conf"
 
 # Path to a dedicated socket for the ubertmux server.
-# Using /tmp ensures it's not interfering with your default tmux socket.
-# If you share the machine with others, you could append your UID:
-#   UBERSOCK="/tmp/ubertmux_$(id -u).sock"
-UBERSOCK="/tmp/ubertmux.sock"
+# Use a per-user directory, following tmux's default pattern for multiuser safety.
+# On most systems, tmux uses /tmp/tmux-$(id -u)/default as the default socket.
+# We'll use /tmp/tmux-$(id -u)/ubertmux.sock for ubertmux.
+# If your system uses /run/user/$(id -u)/tmux/default, substitute accordingly.
+UBERSOCK="/tmp/tmux-$(id -u)/ubertmux.sock"
 
 echo "ℹ Ubertmux config will be: $UBERCONF"
 echo "ℹ Ubertmux socket will be: $UBERSOCK"
+echo
+echo "Note: On some systems, the default tmux socket is at /run/user/\$(id -u)/tmux/default."
+echo "      If you want ubertmux to use that location, edit this script and set:"
+echo "      UBERSOCK=\"/run/user/\$(id -u)/tmux/ubertmux.sock\""
+echo
 
 ###########################################################
 # 3. Create ~/.ubertmux.conf if it doesn’t already exist  #
