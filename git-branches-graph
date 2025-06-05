@@ -11,6 +11,7 @@ The script:
 2. Collects branch names either automatically (`git branch --format '%(refname:short)'`)
    or from explicit user-supplied lists (CLI parameters or standard input).
    Leading markers produced by `git branch` such as “* ” or “+ ” are stripped.
+   • Use --all/-a flag to include remote branches (similar to `git branch --all`)
 3. For every pair of branches it finds their *nearest common ancestor* via
    `git merge-base`.  
    • If the ancestor **commit** is pointed-to by an existing branch, that branch
@@ -19,11 +20,28 @@ The script:
      (`git rev-parse --short=<n>` is attempted, falling back to 7 chars).
 4. Produces a simple *directed* graph where each common-ancestor node points to
    the two (or more) branch tips that diverge from it.
-5. Supports three output formats selectable with `--format`:
+5. Supports five output formats selectable with `--format`:
      • mermaid  (default)  –  “graph LR; A --> B;”
      • dot/graphviz        –  “digraph { A -> B }”
      • csv                 –  “from,to”
+     • png                 –  Renders to PNG via Graphviz
+     • html                –  Interactive HTML with pan/zoom using Mermaid
 6. Prints to STDOUT, making it easy to pipe into `dot -Tpng`, `mmdc`, etc.
+   • Use --browser with HTML format to serve locally and open in browser
+
+IMPORTANT NOTE about --all flag:
+When multiple branches (local and/or remote) point to the same commit, only one
+branch name will be shown in the graph for that commit. This is because the graph
+uses commits as nodes, not branches. For example, if both 'master' and 
+'origin/master' point to commit abc123, the graph will show only one of these
+branch names (typically the last one alphabetically) as the label for that node.
+
+EXPERIMENTAL --cluster-same-commit flag:
+This experimental feature groups branches pointing to the same commit into visual
+clusters (subgraphs in Mermaid, clusters in Graphviz). This allows you to see ALL
+branch names even when multiple branches point to the same commit. The branches are
+grouped together in a box/cluster, making it clear they reference the same commit.
+Note: This feature may produce more complex graphs and is still being refined.
 
 Example
 -------
@@ -36,6 +54,18 @@ Example
 
     # Read branch names from STDIN (could be `git branch` output)
     git branch | ./git_branches_graph.py --stdin -f csv
+
+    # Include remote branches in the graph
+    ./git_branches_graph.py --all
+
+    # [EXPERIMENTAL] Show all branches in clusters when they point to same commit
+    ./git_branches_graph.py --all --cluster-same-commit
+
+    # Generate interactive HTML with pan/zoom
+    ./git_branches_graph.py --format html --output graph.html
+
+    # Open HTML directly in browser (serves on local server)
+    ./git_branches_graph.py --format html --browser
 """
 from __future__ import annotations
 
@@ -45,6 +75,10 @@ import os
 import shlex
 import subprocess
 import sys
+import http.server
+import socketserver
+import threading
+import webbrowser
 from pathlib import Path
 from typing import Dict, Iterable, List, Set, Tuple
 from collections import deque
@@ -103,14 +137,17 @@ def abbreviate_commit(commit: str) -> str:
 # --------------------------------------------------------------------------- #
 
 
-def collect_branches(use_stdin: bool, explicit: List[str]) -> List[str]:
+def collect_branches(use_stdin: bool, explicit: List[str], include_all: bool = False) -> List[str]:
     if use_stdin:
         names = [strip_branch_marker(line) for line in sys.stdin.read().splitlines() if line.strip()]
     elif explicit:
         names = [strip_branch_marker(n) for n in explicit]
     else:
-        # All local branches
-        raw = run_git("branch", "--format=%(refname:short)").splitlines()
+        # All local branches (or all branches if include_all is True)
+        if include_all:
+            raw = run_git("branch", "--all", "--format=%(refname:short)").splitlines()
+        else:
+            raw = run_git("branch", "--format=%(refname:short)").splitlines()
         names = [strip_branch_marker(r) for r in raw if r.strip()]
     if not names:
         sys.stderr.write("error: no branches detected / specified\n")
@@ -138,7 +175,7 @@ def common_ancestor(a_commit: str, b_commit: str) -> str | None:
         return None
 
 
-def build_graph(branch_commits: Dict[str, str]) -> Tuple[Set[Tuple[str, str]], Dict[str, str]]:
+def build_graph(branch_commits: Dict[str, str], cluster_same_commit: bool = False) -> Tuple[Set[Tuple[str, str]], Dict[str, str], Dict[str, List[str]]]:
     """
     Discover all common-ancestor vertices (recursively) and build the full edge
     set. New ancestors discovered during the process are themselves compared
@@ -146,9 +183,20 @@ def build_graph(branch_commits: Dict[str, str]) -> Tuple[Set[Tuple[str, str]], D
     Returns:
         edges: Set[(parent_label, child_label)]
         node_labels: Map commit_sha -> chosen label
+        commit_branches: Map commit_sha -> list of branch names (for clustering)
     """
+    # Track all branches pointing to each commit
+    commit_branches: Dict[str, List[str]] = {}
+    for br, sha in branch_commits.items():
+        commit_branches.setdefault(sha, []).append(br)
+    
     # Initial labels (branch names for tips)
-    node_labels: Dict[str, str] = {sha: br for br, sha in branch_commits.items()}
+    if cluster_same_commit:
+        # Use commit SHA as label when clustering
+        node_labels: Dict[str, str] = {sha: sha for sha in branch_commits.values()}
+    else:
+        # Use last branch name as label (original behavior)
+        node_labels: Dict[str, str] = {sha: br for br, sha in branch_commits.items()}
     vertices: List[str] = list(branch_commits.values())  # queue-like list
 
     edges: Set[Tuple[str, str]] = set()
@@ -177,7 +225,7 @@ def build_graph(branch_commits: Dict[str, str]) -> Tuple[Set[Tuple[str, str]], D
                 if node_labels[anc] != node_labels[sha2]:
                     edges.add((node_labels[anc], node_labels[sha2]))
 
-    return edges, node_labels
+    return edges, node_labels, commit_branches
 
 
 # --------------------------------------------------------------------------- #
@@ -224,16 +272,63 @@ def transitive_reduction(edges: Set[Tuple[str, str]]) -> Set[Tuple[str, str]]:
 # --------------------------------------------------------------------------- #
 
 
-def render_mermaid(edges: Set[Tuple[str, str]]) -> str:
+def render_mermaid(edges: Set[Tuple[str, str]], node_labels: Dict[str, str] = None, 
+                   commit_branches: Dict[str, List[str]] = None, cluster_same_commit: bool = False) -> str:
     lines = ["graph LR"]
-    for parent, child in sorted(edges):
-        lines.append(f"    {shlex.quote(parent)} --> {shlex.quote(child)}")
+    
+    if cluster_same_commit and commit_branches and node_labels:
+        # Track which commits we've already rendered in subgraphs
+        rendered_commits = set()
+        subgraph_counter = 0
+        
+        # Create subgraphs for commits with multiple branches
+        for sha, branches in commit_branches.items():
+            if len(branches) > 1 and sha in node_labels:
+                subgraph_counter += 1
+                lines.append(f"    subgraph cluster_{subgraph_counter}[\" \"]")
+                for branch in sorted(branches):
+                    lines.append(f"        {shlex.quote(branch)}[{shlex.quote(branch)}]")
+                lines.append("    end")
+                rendered_commits.add(sha)
+        
+        # Render edges, using branch names for multi-branch commits
+        for parent, child in sorted(edges):
+            # Determine actual nodes to connect
+            parent_branches = []
+            child_branches = []
+            
+            # Find branches for parent
+            for sha, branches in commit_branches.items():
+                if node_labels.get(sha) == parent:
+                    parent_branches = branches if len(branches) > 1 else [parent]
+                    break
+            if not parent_branches:
+                parent_branches = [parent]
+                
+            # Find branches for child  
+            for sha, branches in commit_branches.items():
+                if node_labels.get(sha) == child:
+                    child_branches = branches if len(branches) > 1 else [child]
+                    break
+            if not child_branches:
+                child_branches = [child]
+            
+            # Connect all combinations
+            for p in parent_branches:
+                for c in child_branches:
+                    lines.append(f"    {shlex.quote(p)} --> {shlex.quote(c)}")
+    else:
+        # Original behavior
+        for parent, child in sorted(edges):
+            lines.append(f"    {shlex.quote(parent)} --> {shlex.quote(child)}")
+    
     return "\n".join(lines)
 
 
-def render_png(edges: Set[Tuple[str, str]]) -> bytes:
+def render_png(edges: Set[Tuple[str, str]], node_labels: Dict[str, str] = None,
+               commit_branches: Dict[str, List[str]] = None, cluster_same_commit: bool = False) -> bytes:
     """Render PNG via Graphviz `dot`."""
-    dot_src = render_dot(edges)
+    dot_src = render_dot(edges, node_labels, commit_branches, cluster_same_commit)
     try:
         # Pass graphviz DOT source as bytes and receive binary PNG data.
         png_data = subprocess.check_output(
@@ -249,10 +344,52 @@ def render_png(edges: Set[Tuple[str, str]]) -> bytes:
     return png_data
 
 
-def render_dot(edges: Set[Tuple[str, str]]) -> str:
+def render_dot(edges: Set[Tuple[str, str]], node_labels: Dict[str, str] = None,
+               commit_branches: Dict[str, List[str]] = None, cluster_same_commit: bool = False) -> str:
     lines = ["digraph G {"]
-    for parent, child in sorted(edges):
-        lines.append(f'    "{parent}" -> "{child}";')
+    lines.append('    rankdir="LR";')  # Left to right layout like Mermaid
+    
+    if cluster_same_commit and commit_branches and node_labels:
+        subgraph_counter = 0
+        
+        # Create clusters for commits with multiple branches
+        for sha, branches in commit_branches.items():
+            if len(branches) > 1 and sha in node_labels:
+                subgraph_counter += 1
+                lines.append(f'    subgraph cluster_{subgraph_counter} {{')
+                lines.append('        style="rounded,filled";')
+                lines.append('        fillcolor="lightgray";')
+                lines.append(f'        label="";')
+                for branch in sorted(branches):
+                    lines.append(f'        "{branch}";')
+                lines.append('    }')
+        
+        # Render edges
+        for parent, child in sorted(edges):
+            # Find branches for parent and child
+            parent_branches = []
+            child_branches = []
+            
+            for sha, branches in commit_branches.items():
+                if node_labels.get(sha) == parent:
+                    parent_branches = branches if len(branches) > 1 else [parent]
+                if node_labels.get(sha) == child:
+                    child_branches = branches if len(branches) > 1 else [child]
+                    
+            if not parent_branches:
+                parent_branches = [parent]
+            if not child_branches:
+                child_branches = [child]
+                
+            # Connect branches
+            for p in parent_branches:
+                for c in child_branches:
+                    lines.append(f'    "{p}" -> "{c}";')
+    else:
+        # Original behavior
+        for parent, child in sorted(edges):
+            lines.append(f'    "{parent}" -> "{child}";')
+    
     lines.append("}")
     return "\n".join(lines)
 
@@ -261,6 +398,73 @@ def render_csv(edges: Set[Tuple[str, str]]) -> str:
     lines = ["from,to"]
     lines += [f"{parent},{child}" for parent, child in sorted(edges)]
     return "\n".join(lines)
+
+
+def render_html(mermaid_content: str, template_path: str = "/home/gw-t490/d/25Q2/code/mermaid_html_template_with_zoom_and_panning.html") -> str:
+    """Render HTML with embedded Mermaid diagram using the template."""
+    try:
+        # Read the template
+        template = Path(template_path).read_text()
+        
+        # Find where to insert the Mermaid content
+        # The template has a placeholder diagram, we need to replace it
+        # Look for the mermaid div content
+        start_marker = '<div id="diagramContainer" class="mermaid">'
+        end_marker = '</div>'
+        
+        start_idx = template.find(start_marker)
+        if start_idx == -1:
+            raise ValueError("Could not find mermaid container in template")
+        
+        # Find the closing tag for this specific div
+        start_idx += len(start_marker)
+        end_idx = template.find(end_marker, start_idx)
+        if end_idx == -1:
+            raise ValueError("Could not find closing tag for mermaid container")
+        
+        # Replace the content between the markers
+        html = template[:start_idx] + "\n      " + mermaid_content + "\n    " + template[end_idx:]
+        
+        return html
+    except Exception as e:
+        sys.stderr.write(f"error: failed to render HTML: {e}\n")
+        sys.exit(2)
+
+
+def serve_and_open_html(html_content: str, port: int = 0) -> None:
+    """Start a local HTTP server and open the HTML in a browser."""
+    import tempfile
+    
+    # Create a temporary directory for serving
+    with tempfile.TemporaryDirectory() as tmpdir:
+        html_path = Path(tmpdir) / "graph.html"
+        html_path.write_text(html_content)
+        
+        # Find an available port
+        with socketserver.TCPServer(("", port), http.server.SimpleHTTPRequestHandler) as httpd:
+            actual_port = httpd.server_address[1]
+            url = f"http://localhost:{actual_port}/graph.html"
+            
+            # Change to temporary directory for serving
+            os.chdir(tmpdir)
+            
+            # Open browser in a separate thread
+            def open_browser():
+                import time
+                time.sleep(0.5)  # Give server time to start
+                webbrowser.open(url)
+            
+            browser_thread = threading.Thread(target=open_browser)
+            browser_thread.daemon = True
+            browser_thread.start()
+            
+            print(f"Serving at {url}")
+            print("Press Ctrl+C to stop the server")
+            
+            try:
+                httpd.serve_forever()
+            except KeyboardInterrupt:
+                print("\nServer stopped")
 
 
 # --------------------------------------------------------------------------- #
@@ -284,6 +488,12 @@ def parse_args(argv: List[str] | None = None) -> argparse.Namespace:
         help="Read branch names from standard input (one per line, accepts `git branch` raw output).",
     )
     p.add_argument(
+        "-a",
+        "--all",
+        action="store_true",
+        help="Include remote branches in addition to local branches.",
+    )
+    p.add_argument(
         "-r",
         "--repo",
         default=".",
@@ -292,7 +502,7 @@ def parse_args(argv: List[str] | None = None) -> argparse.Namespace:
     p.add_argument(
         "-f",
         "--format",
-        choices=("mermaid", "dot", "csv", "png"),
+        choices=("mermaid", "dot", "csv", "png", "html"),
         default="mermaid",
         help="Output format (default: mermaid).",
     )
@@ -303,11 +513,26 @@ def parse_args(argv: List[str] | None = None) -> argparse.Namespace:
              "When --format png and this flag is omitted the script "
              "auto-creates graph.png / graph.<n>.png in the CWD.",
     )
+    p.add_argument(
+        "--cluster-same-commit",
+        action="store_true",
+        help="[EXPERIMENTAL] Group branches pointing to the same commit into clusters/subgraphs. "
+             "Shows all branch names instead of just one per commit.",
+    )
+    p.add_argument(
+        "--browser",
+        action="store_true",
+        help="When using HTML format, start a local server and open in browser.",
+    )
     return p.parse_args(argv)
 
 
 def main(argv: List[str] | None = None) -> None:
     args = parse_args(argv)
+    
+    # If --browser is specified, default to HTML format unless explicitly overridden
+    if args.browser and args.format == "mermaid":  # mermaid is the default
+        args.format = "html"
 
     # If the first positional argument looks like a directory that is a git
     # repository, treat it as the --repo path (for convenience).
@@ -325,9 +550,9 @@ def main(argv: List[str] | None = None) -> None:
 
     ensure_git_repo()
 
-    branches = collect_branches(args.stdin, args.branches)
+    branches = collect_branches(args.stdin, args.branches, args.all)
     branch_commits = map_branches_to_commits(branches)
-    edges, _ = build_graph(branch_commits)
+    edges, node_labels, commit_branches = build_graph(branch_commits, args.cluster_same_commit)
     edges = transitive_reduction(edges)
 
     def write_text(text: str) -> None:
@@ -337,13 +562,24 @@ def main(argv: List[str] | None = None) -> None:
             sys.stdout.write(text + "\n")
 
     if args.format == "mermaid":
-        write_text(render_mermaid(edges))
+        write_text(render_mermaid(edges, node_labels, commit_branches, args.cluster_same_commit))
     elif args.format == "dot":
-        write_text(render_dot(edges))
+        write_text(render_dot(edges, node_labels, commit_branches, args.cluster_same_commit))
     elif args.format == "csv":
         write_text(render_csv(edges))
+    elif args.format == "html":
+        # Generate Mermaid content first
+        mermaid_content = render_mermaid(edges, node_labels, commit_branches, args.cluster_same_commit)
+        html_content = render_html(mermaid_content)
+        
+        if args.browser:
+            # Serve and open in browser
+            serve_and_open_html(html_content)
+        else:
+            # Write to file or stdout
+            write_text(html_content)
     else:  # png
-        png_bytes = render_png(edges)
+        png_bytes = render_png(edges, node_labels, commit_branches, args.cluster_same_commit)
 
         # Determine output path
         if args.output:

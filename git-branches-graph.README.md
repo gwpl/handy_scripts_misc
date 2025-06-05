@@ -8,7 +8,7 @@ A visualization tool that generates directed graphs showing the relationships be
 
 ## Features
 
-- **Multiple output formats**: Mermaid, Graphviz DOT, CSV, and PNG
+- **Multiple output formats**: Mermaid, Graphviz DOT, CSV, PNG, and interactive HTML
 - **Automatic branch detection**: Analyzes all local branches by default
 - **Flexible input**: Specify branches explicitly or read from stdin
 - **Transitive reduction**: Simplifies graphs by removing redundant edges
@@ -34,15 +34,30 @@ git branch | ./git-branches-graph --stdin
 
 # Analyze repository in different directory
 ./git-branches-graph --repo /path/to/repo
+
+# Include remote branches
+./git-branches-graph --all
+
+# [EXPERIMENTAL] Show all branches in clusters when they point to same commit
+./git-branches-graph --all --cluster-same-commit
+
+# Generate interactive HTML with pan/zoom capabilities
+./git-branches-graph --format html --output graph.html
+
+# Open HTML directly in browser (starts local server)
+./git-branches-graph --format html --browser
 ```
 
 ## Options
 
 - `-h, --help`: Show help message
 - `-s, --stdin`: Read branch names from standard input
+- `-a, --all`: Include remote branches in addition to local branches
 - `-r, --repo REPO`: Path to Git repository (default: current directory)
-- `-f, --format {mermaid,dot,csv,png}`: Output format (default: mermaid)
+- `-f, --format {mermaid,dot,csv,png,html}`: Output format (default: mermaid)
 - `-o, --output OUTPUT`: Write output to file (auto-generates filename for PNG if omitted)
+- `--cluster-same-commit`: [EXPERIMENTAL] Group branches pointing to same commit into clusters
+- `--browser`: When using HTML format, start a local server and open in browser
 
 ## Example Output
 
@@ -112,6 +127,62 @@ graph LR
 3. **Graph Construction**: Builds directed edges from ancestors to descendants
 4. **Transitive Reduction**: Removes redundant paths for cleaner visualization
 5. **Output Generation**: Formats the graph in the requested format
+
+## Important Note about Multiple Branches on Same Commit
+
+When multiple branches (local and/or remote) point to the same commit, only one branch name will be shown in the graph for that commit. This is because the graph uses commits as nodes, not branches. 
+
+For example, if both `master` and `origin/master` point to the same commit, the graph will show only one of these branch names as the label for that node (typically the last one alphabetically). This behavior is particularly noticeable when using the `--all` flag to include remote branches.
+
+## Experimental Features
+
+### --cluster-same-commit Flag
+
+This experimental feature addresses the limitation above by grouping branches that point to the same commit into visual clusters:
+
+- **Mermaid**: Creates subgraphs containing all branch names
+- **Graphviz/DOT**: Creates clusters with a gray background
+- **Purpose**: Shows ALL branch names even when they reference the same commit
+- **Usage**: `./git-branches-graph --all --cluster-same-commit`
+
+Example output with clustering:
+```mermaid
+graph LR
+    subgraph cluster_1[" "]
+        master[master]
+        origin/master[origin/master]
+    end
+    master --> feature/auth
+    origin/master --> feature/auth
+```
+
+Note: This feature is experimental and may produce more complex graphs. It's particularly useful when you need to see all branch references clearly.
+
+## HTML Output Format
+
+The HTML output format creates an interactive visualization with the following features:
+
+- **Pan and Zoom**: Use mouse wheel to zoom, click and drag to pan
+- **Double-click**: Zoom to a specific point
+- **Control buttons**: Zoom in/out, reset view, fit to screen
+- **Keyboard shortcuts**: +/- for zoom, 0 to reset, F to fit
+- **Full-screen view**: The diagram uses the entire browser viewport
+- **Embedded Mermaid**: Uses Mermaid.js for rendering with svg-pan-zoom for interactivity
+
+### Usage Examples
+
+```bash
+# Save to HTML file
+./git-branches-graph --format html -o branches.html
+
+# Open directly in browser (starts local server)
+./git-branches-graph --format html --browser
+
+# Combine with other options
+./git-branches-graph --all --cluster-same-commit --format html --browser
+```
+
+The HTML template includes Font Awesome icons and provides a professional, interactive viewing experience for complex branch graphs.
 
 ## Requirements
 
