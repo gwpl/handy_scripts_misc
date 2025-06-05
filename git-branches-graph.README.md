@@ -2,6 +2,13 @@
 
 A visualization tool that generates directed graphs showing the relationships between Git branches and their common ancestors.
 
+> **Tip:** Before running `git-branches-graph` with the `--all` flag (or when you want to see up-to-date remote branches), it's a good idea to refresh your local view of remotes:
+>
+> ```bash
+> git fetch --prune --all
+> ```
+> This ensures that deleted or newly created remote branches are accurately reflected in the graph.
+
 ## Overview
 
 `git-branches-graph` analyzes your Git repository's branch structure and creates visual representations of how branches relate to each other through their merge-base ancestors. This helps understand the branching history and relationships in complex Git repositories.
@@ -210,3 +217,21 @@ chmod +x git-branches-graph
 - **"Not in a Git repository"**: Run from within a Git repository or use `--repo`
 - **Empty output**: Ensure you have multiple branches to compare
 - **PNG generation fails**: Install Graphviz (`apt install graphviz` or `brew install graphviz`)
+
+---
+
+## FAQ
+
+### Why don't I see all remote branches, or why do some deleted branches still appear?
+
+`git-branches-graph` relies on your local Git repository's knowledge of remote branches. If you haven't fetched recently, or if remote branches have been deleted or renamed, your local view may be out of date. To ensure the graph reflects the current state of all remotes, run:
+
+```bash
+git fetch --prune --all
+```
+
+This updates your local references and prunes any branches that have been deleted on the remote.
+
+### Why do some commits show only one branch name, even if multiple branches point to the same commit?
+
+By default, the tool uses commits as graph nodes, and only one branch name is shown per commit. If you want to see all branch names that point to the same commit, use the experimental `--cluster-same-commit` flag.
