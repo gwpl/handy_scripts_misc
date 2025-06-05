@@ -514,12 +514,14 @@ def parse_args(argv: List[str] | None = None) -> argparse.Namespace:
              "auto-creates graph.png / graph.<n>.png in the CWD.",
     )
     p.add_argument(
+        "-C",
         "--cluster-same-commit",
         action="store_true",
         help="[EXPERIMENTAL] Group branches pointing to the same commit into clusters/subgraphs. "
              "Shows all branch names instead of just one per commit.",
     )
     p.add_argument(
+        "-B",
         "--browser",
         action="store_true",
         help="When using HTML format, start a local server and open in browser.",
