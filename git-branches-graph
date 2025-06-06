@@ -134,14 +134,19 @@ def resolve_name_to_commit(name: str) -> str:
     else:
         base = name
 
-    search_order = []
+    search_order: list[str] = []
     if is_tag:
-        search_order.append(f"refs/tags/{base}")   # tags first
+        search_order.append(f"refs/tags/{base}")        # tag first when user marked it
 
-    # normal precedence
-    search_order += [f"refs/heads/{base}",
-                     f"refs/remotes/{base}",
-                     base]
+    # always try branches / remotes first
+    search_order += [
+        f"refs/heads/{base}",
+        f"refs/remotes/{base}",
+        base,
+    ]
+
+    if not is_tag:
+        search_order.append(f"refs/tags/{base}")        # tag last as generic fall-back
 
     for ref in search_order:
         sha = _try_git_rev_parse(ref)
@@ -529,16 +534,28 @@ def parse_args(argv: List[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description="Produce a simple graph (Mermaid, Graphviz, CSV) showing common ancestors of Git branches."
     )
+    group = p.add_mutually_exclusive_group()
+    group.add_argument(
+        "-s", "--stdin",
+        action="store_true",
+        help="Read branch names from standard input (one per line, accepts raw `git branch` output)."
+    )
+    group.add_argument(
+        "-l", "--list",
+        metavar="LIST",
+        help="Comma-separated list of branch / tag names to include "
+             "(mutually exclusive with --stdin / --list-file / positional branches)."
+    )
+    group.add_argument(
+        "-L", "--list-file",
+        metavar="FILE",
+        help="Path to a text file containing branch / tag names (one per line). "
+             "Mutually exclusive with --stdin / --list / positional branches."
+    )
     p.add_argument(
         "branches",
         nargs="*",
         help="Branch names to include. If omitted all local branches are used.",
-    )
-    p.add_argument(
-        "-s",
-        "--stdin",
-        action="store_true",
-        help="Read branch names from standard input (one per line, accepts `git branch` raw output).",
     )
     p.add_argument(
         "-a",
@@ -588,9 +605,72 @@ def parse_args(argv: List[str] | None = None) -> argparse.Namespace:
     return p.parse_args(argv)
 
 
+def _name_exists(name: str) -> bool:
+    """Return True if *name* exists as a branch, remote branch, loose ref or tag."""
+    for ref in (
+        f"refs/heads/{name}",
+        f"refs/remotes/{name}",
+        name,                       # already a full ref?
+        f"refs/tags/{name}",
+    ):
+        if _try_git_rev_parse(ref):
+            return True
+    return False
+
 def main(argv: List[str] | None = None) -> None:
     args = parse_args(argv)
     
+    # ---- choose exactly one source of names ---------------------------------
+    sources_used = sum((
+        bool(args.stdin),
+        bool(args.list),
+        bool(args.list_file),
+        bool(args.branches),
+    ))
+    if sources_used > 1:
+        sys.stderr.write(
+            "error: --stdin, --list, --list-file and positional branch names "
+            "are mutually exclusive\n"
+        )
+        sys.exit(1)
+
+    # ------------------------------------------------------------------------
+    if args.list or args.list_file:
+        if args.list:
+            raw_names = [n.strip() for n in args.list.split(",") if n.strip()]
+        else:   # --list-file
+            raw_names = [
+                ln.strip() for ln in Path(args.list_file).expanduser().read_text().splitlines()
+                if ln.strip()
+            ]
+
+        # keep only names that exist (branch first, tag second)
+        filtered = [n for n in raw_names if _name_exists(n)]
+
+        # honour --include-tags switch (adds *labelled* tag nodes)
+        if args.include_tags:
+            tag_names = [
+                f"{t.strip()} (tag)"
+                for t in run_git("tag", "--list").splitlines()
+                if t.strip()
+            ]
+            filtered.extend(tag_names)
+
+        if not filtered:
+            sys.stderr.write("error: no valid branches / tags found\n")
+            sys.exit(1)
+
+        branches = sorted(set(filtered))
+
+    else:
+        # original paths: stdin / positional / auto-detect
+        branches = collect_branches(
+            args.stdin,
+            args.branches,
+            args.all,
+            args.include_tags,
+        )
+
     # If --browser is specified, default to HTML format unless explicitly overridden
     if args.browser and args.format == "mermaid":  # mermaid is the default
         args.format = "html"
@@ -611,7 +691,6 @@ def main(argv: List[str] | None = None) -> None:
 
     ensure_git_repo()
 
-    branches = collect_branches(args.stdin, args.branches, args.all, args.include_tags)
     branch_commits = map_branches_to_commits(branches)
     edges, node_labels, commit_branches = build_graph(branch_commits, args.cluster_same_commit)
     edges = transitive_reduction(edges)
