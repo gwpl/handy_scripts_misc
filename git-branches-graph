@@ -104,6 +104,39 @@ def run_git(*args: str) -> str:
         sys.exit(2)
     return out.strip()
 
+# --- new helper ----------------------------------------------------------- #
+def _try_git_rev_parse(ref: str) -> str | None:
+    """
+    Run `git rev-parse <ref>` but **do NOT exit** when it fails.
+    Returns the SHA (stripped) or None when the ref does not exist.
+    """
+    cmd = ["git"]
+    if GIT_REPO is not None:
+        cmd += ["-C", str(GIT_REPO)]
+    cmd += ["rev-parse", ref]
+    try:
+        return subprocess.check_output(cmd, text=True).strip()
+    except subprocess.CalledProcessError:
+        return None
+
+def resolve_name_to_commit(name: str) -> str:
+    """
+    Resolve *name* to a commit SHA while giving priority to real branches:
+        1. refs/heads/<name>          (local branch)
+        2. refs/remotes/<name>        (remote branch)
+        3. <name>                     (fallback – tag, SHA, etc.)
+    Exits with error if nothing resolves.
+    """
+    for full_ref in (f"refs/heads/{name}",
+                     f"refs/remotes/{name}",
+                     name):
+        sha = _try_git_rev_parse(full_ref)
+        if sha:
+            return sha
+
+    sys.stderr.write(f"fatal: could not resolve '{name}' to a commit\n")
+    sys.exit(1)
+
 
 def ensure_git_repo() -> None:
     """Abort if we are not inside a git repository."""
@@ -156,7 +189,8 @@ def collect_branches(use_stdin: bool, explicit: List[str], include_all: bool = F
 
 
 def map_branches_to_commits(branches: Iterable[str]) -> Dict[str, str]:
-    return {br: run_git("rev-parse", br) for br in branches}
+    # OLD: return {br: run_git("rev-parse", br) for br in branches}
+    return {br: resolve_name_to_commit(br) for br in branches}
 
 
 def common_ancestor(a_commit: str, b_commit: str) -> str | None:
