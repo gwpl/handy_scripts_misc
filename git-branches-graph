@@ -12,6 +12,7 @@ The script:
    or from explicit user-supplied lists (CLI parameters or standard input).
    Leading markers produced by `git branch` such as “* ” or “+ ” are stripped.
    • Use --all/-a flag to include remote branches (similar to `git branch --all`)
+   • Use --tags/-T/--include-tags to include Git tags in addition to branches
 3. For every pair of branches it finds their *nearest common ancestor* via
    `git merge-base`.  
    • If the ancestor **commit** is pointed-to by an existing branch, that branch
@@ -121,16 +122,29 @@ def _try_git_rev_parse(ref: str) -> str | None:
 
 def resolve_name_to_commit(name: str) -> str:
     """
-    Resolve *name* to a commit SHA while giving priority to real branches:
-        1. refs/heads/<name>          (local branch)
-        2. refs/remotes/<name>        (remote branch)
-        3. <name>                     (fallback – tag, SHA, etc.)
-    Exits with error if nothing resolves.
+    Resolve *name* to a commit SHA giving priority to the correct ref type.
+    The caller may pass a display-name ending with ' (tag)' produced by
+    --include-tags.  That suffix is stripped before resolution and the
+    `refs/tags/…` namespace is tried first.
     """
-    for full_ref in (f"refs/heads/{name}",
-                     f"refs/remotes/{name}",
-                     name):
-        sha = _try_git_rev_parse(full_ref)
+    is_tag = False
+    if name.endswith(" (tag)"):
+        base = name[:-6].rstrip()          # strip trailing ' (tag)'
+        is_tag = True
+    else:
+        base = name
+
+    search_order = []
+    if is_tag:
+        search_order.append(f"refs/tags/{base}")   # tags first
+
+    # normal precedence
+    search_order += [f"refs/heads/{base}",
+                     f"refs/remotes/{base}",
+                     base]
+
+    for ref in search_order:
+        sha = _try_git_rev_parse(ref)
         if sha:
             return sha
 
@@ -170,7 +184,7 @@ def abbreviate_commit(commit: str) -> str:
 # --------------------------------------------------------------------------- #
 
 
-def collect_branches(use_stdin: bool, explicit: List[str], include_all: bool = False) -> List[str]:
+def collect_branches(use_stdin: bool, explicit: List[str], include_all: bool = False, include_tags: bool = False) -> List[str]:
     if use_stdin:
         names = [strip_branch_marker(line) for line in sys.stdin.read().splitlines() if line.strip()]
     elif explicit:
@@ -182,6 +196,11 @@ def collect_branches(use_stdin: bool, explicit: List[str], include_all: bool = F
         else:
             raw = run_git("branch", "--format=%(refname:short)").splitlines()
         names = [strip_branch_marker(r) for r in raw if r.strip()]
+    if include_tags:
+        tag_raw = run_git("tag", "--list").splitlines()
+        # mark them so they stay distinguishable in the graph
+        tag_names = [f"{t.strip()} (tag)" for t in tag_raw if t.strip()]
+        names += tag_names
     if not names:
         sys.stderr.write("error: no branches detected / specified\n")
         sys.exit(1)
@@ -528,6 +547,12 @@ def parse_args(argv: List[str] | None = None) -> argparse.Namespace:
         help="Include remote branches in addition to local branches.",
     )
     p.add_argument(
+        "-T", "--tags", "--include-tags",
+        dest="include_tags",
+        action="store_true",
+        help="Include Git tags in addition to branches."
+    )
+    p.add_argument(
         "-r",
         "--repo",
         default=".",
@@ -586,7 +611,7 @@ def main(argv: List[str] | None = None) -> None:
 
     ensure_git_repo()
 
-    branches = collect_branches(args.stdin, args.branches, args.all)
+    branches = collect_branches(args.stdin, args.branches, args.all, args.include_tags)
     branch_commits = map_branches_to_commits(branches)
     edges, node_labels, commit_branches = build_graph(branch_commits, args.cluster_same_commit)
     edges = transitive_reduction(edges)
