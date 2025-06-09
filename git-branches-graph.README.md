@@ -17,9 +17,12 @@ A visualization tool that generates directed graphs showing the relationships be
 
 - **Multiple output formats**: Mermaid, Graphviz DOT, CSV, PNG, and interactive HTML
 - **Automatic branch detection**: Analyzes all local branches by default
-- **Flexible input**: Specify branches explicitly or read from stdin
-- **Transitive reduction**: Simplifies graphs by removing redundant edges
+- **Flexible input**: Specify branches explicitly, read from stdin, provide comma-separated lists, or load from file
+- **Branch/tag disambiguation**: Automatically resolves naming conflicts, preferring branches over tags
+- **Tag support**: Include Git tags in the analysis alongside branches
+- **Transitive reduction**: Simplifies graphs by removing redundant edges (can be disabled)
 - **Smart labeling**: Uses branch names when ancestors are branch tips, otherwise shows commit hashes
+- **Branch clustering**: Group branches pointing to the same commit for clarity
 
 ## Usage
 
@@ -45,6 +48,21 @@ git branch | ./git-branches-graph --stdin
 # Include remote branches
 ./git-branches-graph --all
 
+# Include Git tags in the analysis
+./git-branches-graph --tags
+
+# Include both remote branches and tags
+./git-branches-graph --all --tags
+
+# Specify branches/tags with comma-separated list
+./git-branches-graph --list main,develop,v1.0.0,feature/auth
+
+# Load branches/tags from a file (one per line)
+./git-branches-graph --list-file branches.txt
+
+# Show full graph without transitive reduction
+./git-branches-graph --no-transitive-reduction
+
 # [EXPERIMENTAL] Show all branches in clusters when they point to same commit
 ./git-branches-graph --all --cluster-same-commit
 
@@ -57,14 +75,23 @@ git branch | ./git-branches-graph --stdin
 
 ## Options
 
+### Input Options
 - `-h, --help`: Show help message
-- `-s, --stdin`: Read branch names from standard input
+- `-s, --stdin`: Read branch names from standard input (mutually exclusive with `-l` and `-L`)
+- `-l, --list LIST`: Comma-separated list of branch/tag names (mutually exclusive with `-s` and `-L`)
+- `-L, --list-file FILE`: Path to file with branch/tag names, one per line (mutually exclusive with `-s` and `-l`)
 - `-a, --all`: Include remote branches in addition to local branches
+- `-T, --tags, --include-tags`: Include Git tags in addition to branches
 - `-r, --repo REPO`: Path to Git repository (default: current directory)
+
+### Output Options
 - `-f, --format {mermaid,dot,csv,png,html}`: Output format (default: mermaid)
 - `-o, --output OUTPUT`: Write output to file (auto-generates filename for PNG if omitted)
-- `--cluster-same-commit`: [EXPERIMENTAL] Group branches pointing to same commit into clusters
-- `--browser`: When using HTML format, start a local server and open in browser
+- `-B, --browser`: When using HTML format, start a local server and open in browser
+
+### Graph Options
+- `-C, --cluster-same-commit`: [EXPERIMENTAL] Group branches pointing to same commit into clusters
+- `--no-transitive-reduction, --full-graph`: Skip transitive reduction to show all edges including redundant paths
 
 ## Example Output
 
@@ -129,11 +156,12 @@ graph LR
 
 ## How It Works
 
-1. **Branch Collection**: Gathers branch names from Git or user input
-2. **Ancestor Discovery**: Finds merge-base for each branch pair
-3. **Graph Construction**: Builds directed edges from ancestors to descendants
-4. **Transitive Reduction**: Removes redundant paths for cleaner visualization
-5. **Output Generation**: Formats the graph in the requested format
+1. **Branch Collection**: Gathers branch names from Git or user input (including tags if requested)
+2. **Name Resolution**: Resolves names to commits, handling branch/tag disambiguation
+3. **Ancestor Discovery**: Finds merge-base for each branch pair
+4. **Graph Construction**: Builds directed edges from ancestors to descendants
+5. **Transitive Reduction**: Removes redundant paths for cleaner visualization (optional)
+6. **Output Generation**: Formats the graph in the requested format
 
 ## Important Note about Multiple Branches on Same Commit
 
@@ -211,6 +239,9 @@ chmod +x git-branches-graph
 - Pipe Mermaid output to documentation or GitHub README files
 - Use CSV format for further processing with other tools
 - Combine with `git branch --merged` to focus on active branches
+- Use `--list` for analyzing specific branches/tags without affecting your working directory
+- Use `--no-transitive-reduction` to see all relationships before simplification
+- Combine `--all --tags` to get a complete view of your repository structure
 
 ## Troubleshooting
 
@@ -235,3 +266,12 @@ This updates your local references and prunes any branches that have been delete
 ### Why do some commits show only one branch name, even if multiple branches point to the same commit?
 
 By default, the tool uses commits as graph nodes, and only one branch name is shown per commit. If you want to see all branch names that point to the same commit, use the experimental `--cluster-same-commit` flag.
+
+### How does the tool handle branches and tags with the same name?
+
+When resolving names, the tool prioritizes branches over tags. It checks in this order:
+1. Local branches (`refs/heads/name`)
+2. Remote branches (`refs/remotes/name`)
+3. Tags (`refs/tags/name`)
+
+This ensures that if a branch and tag share the same name, the branch will be used. When using `--tags`, tags are explicitly marked with "(tag)" suffix to avoid confusion.
