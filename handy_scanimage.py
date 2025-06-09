@@ -88,7 +88,8 @@ def scan(basename, file_format, date_option, sane_device, mode, resolution,
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Scan an image with options.')
+    parser = argparse.ArgumentParser(description='Scan an image with options.',
+                                     formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument('-b', '--basename', default='scanimage',
                         help='Base name for the output file')
     parser.add_argument('-f', '--format', default=os.getenv('SCANIMAGE_FORMAT', 'png'),
