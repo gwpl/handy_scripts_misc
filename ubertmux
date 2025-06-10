@@ -36,6 +36,12 @@
 
 set -euo pipefail
 
+#--------------------------------------------------
+# Helper logging functions
+#--------------------------------------------------
+INFO()  { echo -e "ℹ  $*"; }
+ERROR() { echo -e "❌ Error: $*" >&2; }
+
 echo "🚀 Starting ubertmux setup..."
 
 ############################################
@@ -63,6 +69,22 @@ UBERCONF="$HOME/.ubertmux.conf"
 # We'll use /tmp/tmux-$(id -u)/ubertmux.sock for ubertmux.
 # If your system uses /run/user/$(id -u)/tmux/default, substitute accordingly.
 UBERSOCK="/tmp/tmux-$(id -u)/ubertmux.sock"
+
+#--------------------------------------------------
+# Optional workspace support
+#--------------------------------------------------
+# If the environment variable UBERTMUX_WORKSPACE is set, we validate that it
+# points to an existing directory.  Later we will:
+#   • Append a “new-window -c <workspace>” binding to the config (if missing)
+#   • Change to that directory before launching tmux
+WORKSPACE="${UBERTMUX_WORKSPACE:-}"
+if [[ -n "$WORKSPACE" ]]; then
+    if [[ ! -d "$WORKSPACE" ]]; then
+        ERROR "UBERTMUX_WORKSPACE is set to '$WORKSPACE' but that directory does not exist."
+        exit 1
+    fi
+    INFO "UBERTMUX_WORKSPACE detected: $WORKSPACE"
+fi
 
 echo "ℹ Ubertmux config will be: $UBERCONF"
 echo "ℹ Ubertmux socket will be: $UBERSOCK"
@@ -100,6 +122,18 @@ else
     echo "✔ Found existing ubertmux config at $UBERCONF. Leaving it intact."
 fi
 
+#--------------------------------------------------
+# 3b. If a workspace is requested, ensure the config
+#     has a binding to open new windows inside it.
+#--------------------------------------------------
+if [[ -n "$WORKSPACE" ]]; then
+    # Avoid duplicating the bind line if the user already has one.
+    if ! grep -qE "bind[[:space:]]+c[[:space:]]+new-window[[:space:]]+-c[[:space:]]+'?$WORKSPACE'?" "$UBERCONF"; then
+        INFO "Adding workspace-specific new-window binding to $UBERCONF"
+        printf "\n# Start new windows in CWD=%s\nbind c new-window -c '%s'\n" "$WORKSPACE" "$WORKSPACE" >> "$UBERCONF"
+    fi
+fi
+
 ##############################################################
 # 4. Handle stale socket if present but no tmux server alive #
 ##############################################################
@@ -134,6 +168,13 @@ echo
 # new-session -A -s ubertmux:
 #        * -s ubertmux names the session “ubertmux”
 #        * -A        tells tmux: “If session exists, attach. Otherwise, create it.”
+
+# If a workspace has been requested, switch to it so the initial pane starts there.
+if [[ -n "$WORKSPACE" ]]; then
+    INFO "Changing directory to workspace: $WORKSPACE"
+    cd "$WORKSPACE"
+fi
+
 tmux -f "$UBERCONF" -S "$UBERSOCK" new-session -A -s ubertmux
 
 # If tmux exits unexpectedly, the script will end here.
