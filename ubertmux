@@ -39,8 +39,8 @@ set -euo pipefail
 #--------------------------------------------------
 # Helper logging functions
 #--------------------------------------------------
-INFO()  { echo -e "ℹ  $*"; }
-ERROR() { echo -e "❌ Error: $*" >&2; }
+INFO()  { echo "INFO: $*"; }
+ERROR() { echo "ERROR: $*" >&2; }
 
 echo "🚀 Starting ubertmux setup..."
 
@@ -69,6 +69,7 @@ UBERCONF="$HOME/.ubertmux.conf"
 # We'll use /tmp/tmux-$(id -u)/ubertmux.sock for ubertmux.
 # If your system uses /run/user/$(id -u)/tmux/default, substitute accordingly.
 UBERSOCK="/tmp/tmux-$(id -u)/ubertmux.sock"
+INFO "Using dedicated socket: $UBERSOCK"
 
 #--------------------------------------------------
 # Optional workspace support
