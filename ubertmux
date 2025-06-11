@@ -42,19 +42,19 @@ set -euo pipefail
 INFO()  { echo "INFO: $*"; }
 ERROR() { echo "ERROR: $*" >&2; }
 
-echo "🚀 Starting ubertmux setup..."
+INFO "🚀 Starting ubertmux setup..."
 
 ############################################
 # 1. Ensure tmux is installed and runnable  #
 ############################################
 
 if ! command -v tmux &>/dev/null; then
-    echo "❌ Error: tmux is not installed or not in PATH." >&2
-    echo "   Please install tmux first (e.g., apt install tmux, brew install tmux, etc.)." >&2
+    ERROR "tmux is not installed or not in PATH."
+    ERROR "Please install tmux first (e.g., apt install tmux, brew install tmux, etc.)."
     exit 1
 fi
 
-echo "✔ tmux found."
+INFO "✔ tmux found."
 
 ############################################
 # 2. Define config file and socket paths  #
@@ -87,8 +87,8 @@ if [[ -n "$WORKSPACE" ]]; then
     INFO "UBERTMUX_WORKSPACE detected: $WORKSPACE"
 fi
 
-echo "ℹ Ubertmux config will be: $UBERCONF"
-echo "ℹ Ubertmux socket will be: $UBERSOCK"
+INFO "ℹ Ubertmux config will be: $UBERCONF"
+INFO "ℹ Ubertmux socket will be: $UBERSOCK"
 echo
 echo "Note: On some systems, the default tmux socket is at /run/user/\$(id -u)/tmux/default."
 echo "      If you want ubertmux to use that location, edit this script and set:"
@@ -100,7 +100,7 @@ echo
 ###########################################################
 
 if [[ ! -f "$UBERCONF" ]]; then
-    echo "✍ $UBERCONF not found. Creating a minimal ubertmux config..."
+    INFO "✍ $UBERCONF not found. Creating a minimal ubertmux config..."
 
     cat > "$UBERCONF" <<'EOF'
 # ~/.ubertmux.conf
@@ -118,9 +118,9 @@ bind C-a send-prefix
 #  such as status-line color changes, pane-navigation shortcuts, etc.)
 EOF
 
-    echo "✔ Created $UBERCONF."
+    INFO "✔ Created $UBERCONF."
 else
-    echo "✔ Found existing ubertmux config at $UBERCONF. Leaving it intact."
+    INFO "✔ Found existing ubertmux config at $UBERCONF. Leaving it intact."
 fi
 
 #--------------------------------------------------
@@ -140,28 +140,28 @@ fi
 ##############################################################
 
 if [[ -S "$UBERSOCK" ]]; then
-    echo "ℹ Found existing socket file at $UBERSOCK. Checking for a running ubertmux server..."
+    INFO "ℹ Found existing socket file at $UBERSOCK. Checking for a running ubertmux server..."
 
     # Attempt to list sessions on that socket. If it fails with “connection refused” or “no server running”,
     # we treat it as a stale socket and remove the file so tmux can recreate it cleanly.
     if ! tmux -S "$UBERSOCK" ls &>/dev/null; then
-        echo "⚠ No tmux server responding on $UBERSOCK. Cleaning up stale socket file..."
+        INFO "⚠ No tmux server responding on $UBERSOCK. Cleaning up stale socket file..."
         rm -f "$UBERSOCK"
-        echo "✔ Removed stale socket."
+        INFO "✔ Removed stale socket."
     else
-        echo "✔ A tmux server is already running on $UBERSOCK."
+        INFO "✔ A tmux server is already running on $UBERSOCK."
     fi
 else
-    echo "ℹ No existing ubertmux socket detected. Will create a new server shortly."
+    INFO "ℹ No existing ubertmux socket detected. Will create a new server shortly."
 fi
 
 ####################################################
 # 5. Launch (or attach) the ubertmux tmux session  #
 ####################################################
 
-echo "🔧 Starting or attaching to the ubertmux tmux server..."
-echo "   Note: We use '-f $UBERCONF -S $UBERSOCK' to ensure a brand-new server (or attach to the right one)."
-echo "   This guarantees that your default tmux (on its own socket) will never load ~/.ubertmux.conf."
+INFO "🔧 Starting or attaching to the ubertmux tmux server..."
+INFO "Note: We use '-f $UBERCONF -S $UBERSOCK' to ensure a brand-new server (or attach to the right one)."
+INFO "This guarantees that your default tmux (on its own socket) will never load ~/.ubertmux.conf."
 echo
 
 # -f  : point to our ubertmux-specific config
