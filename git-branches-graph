@@ -110,14 +110,37 @@ def _try_git_rev_parse(ref: str) -> str | None:
     """
     Run `git rev-parse <ref>` but **do NOT exit** when it fails.
     Returns the SHA (stripped) or None when the ref does not exist.
+    
+    IMPORTANT: We suppress stderr to avoid confusing error messages when checking
+    if refs exist (which is expected to fail for many refs we try).
+    
+    WHY THIS FUNCTION EXISTS:
+    - The main run_git() helper exits on failure, but we need to *test* if refs exist
+    - When resolving branch names, we try multiple ref paths until one works
+    - Each failed attempt would spam stderr with "fatal: ambiguous argument..." messages
+    - These errors confused users who thought something was broken
+    
+    HOW IT WORKS:
+    - Runs git rev-parse to convert a ref to its SHA
+    - Suppresses stderr with DEVNULL to hide expected failures
+    - Returns None on failure instead of exiting
+    - This allows the calling code to try multiple ref paths silently
+    
+    EXAMPLE: For 'origin/master', we might try:
+    1. refs/remotes/origin/master (succeeds, returns SHA)
+    2. refs/heads/origin/master (fails silently, returns None)
+    3. origin/master (would succeed but we already found it)
     """
     cmd = ["git"]
     if GIT_REPO is not None:
         cmd += ["-C", str(GIT_REPO)]
     cmd += ["rev-parse", ref]
     try:
-        return subprocess.check_output(cmd, text=True).strip()
+        # Suppress stderr to avoid git error messages when refs don't exist
+        # This is critical - without stderr=DEVNULL, users see confusing errors
+        return subprocess.check_output(cmd, text=True, stderr=subprocess.DEVNULL).strip()
     except subprocess.CalledProcessError:
+        # This is expected - many refs we try won't exist
         return None
 
 def resolve_name_to_commit(name: str) -> str:
@@ -126,6 +149,27 @@ def resolve_name_to_commit(name: str) -> str:
     The caller may pass a display-name ending with ' (tag)' produced by
     --include-tags.  That suffix is stripped before resolution and the
     `refs/tags/…` namespace is tried first.
+    
+    EDGE CASES HANDLED:
+    1. Remote branches like 'origin/master' need to be resolved as 'refs/remotes/origin/master'
+       not 'refs/remotes/origin/master' or 'refs/heads/origin/master'
+    2. Special case: 'origin' alone (refs/remotes/origin/HEAD) should be filtered out earlier
+    3. Tags are marked with ' (tag)' suffix and prioritized in refs/tags/ namespace
+    
+    WHY THESE EDGE CASES MATTER:
+    - Git stores refs in different namespaces: heads/ for local, remotes/ for remote branches
+    - A name like 'origin/master' could theoretically exist as:
+      * refs/heads/origin/master (local branch with '/' in name)
+      * refs/remotes/origin/master (remote tracking branch - most common)
+    - Without proper ordering, we'd resolve to the wrong ref or fail entirely
+    - The original code tried refs/heads/origin/master first, causing "unknown revision" errors
+    
+    HOW WE RESOLVE NAMES:
+    1. Tags marked with ' (tag)' suffix get priority in refs/tags/ namespace
+    2. Names with '/' are assumed to be remote branches (refs/remotes/) first
+    3. Then try as local branch (refs/heads/)
+    4. Then try as-is (could be full ref or SHA)
+    5. Finally try tags as fallback (unless already tried)
     """
     is_tag = False
     if name.endswith(" (tag)"):
@@ -138,11 +182,19 @@ def resolve_name_to_commit(name: str) -> str:
     if is_tag:
         search_order.append(f"refs/tags/{base}")        # tag first when user marked it
 
-    # always try branches / remotes first
+    # WHY: Names containing '/' are almost always remote branches (origin/master)
+    # HOW: Check refs/remotes/ namespace first for these names
+    # This fixes the main issue where 'origin/master' was being checked as
+    # 'refs/heads/origin/master' (doesn't exist) instead of 'refs/remotes/origin/master'
+    if '/' in base and not base.startswith('refs/'):
+        # This looks like a remote branch (e.g., 'origin/master')
+        # Try it as a remote ref first
+        search_order.append(f"refs/remotes/{base}")
+    
+    # always try branches / remotes in standard order
     search_order += [
         f"refs/heads/{base}",
-        f"refs/remotes/{base}",
-        base,
+        base,  # Try as-is (might already be a full ref or a commit SHA)
     ]
 
     if not is_tag:
@@ -190,6 +242,25 @@ def abbreviate_commit(commit: str) -> str:
 
 
 def collect_branches(use_stdin: bool, explicit: List[str], include_all: bool = False, include_tags: bool = False) -> List[str]:
+    """
+    Collect branch names from various sources.
+    
+    EDGE CASES HANDLED:
+    1. 'origin' without a branch name is refs/remotes/origin/HEAD - we filter this out
+       as it's not a real branch but a symbolic ref to the default remote branch
+    2. git branch output may include markers like '* ' or '+ ' which we strip
+    3. When --all is used, we get both local branches and remote branches like 'origin/master'
+    
+    WHY THESE EDGE CASES EXIST:
+    - Git's 'branch --all' includes refs/remotes/origin/HEAD which appears as just 'origin'
+    - This causes errors later when we try to resolve 'origin' as refs/heads/origin
+    - Users don't expect to see 'origin' as a standalone branch in the graph
+    
+    HOW WE HANDLE THEM:
+    - Strip git branch markers (* for current branch, + for worktree branch)
+    - Filter out bare remote names (no '/' character) that are known remotes
+    - This preserves actual branches named 'origin' while removing HEAD refs
+    """
     if use_stdin:
         names = [strip_branch_marker(line) for line in sys.stdin.read().splitlines() if line.strip()]
     elif explicit:
@@ -200,7 +271,20 @@ def collect_branches(use_stdin: bool, explicit: List[str], include_all: bool = F
             raw = run_git("branch", "--all", "--format=%(refname:short)").splitlines()
         else:
             raw = run_git("branch", "--format=%(refname:short)").splitlines()
-        names = [strip_branch_marker(r) for r in raw if r.strip()]
+        # Filter out problematic entries:
+        # - 'origin' alone is refs/remotes/origin/HEAD (symbolic ref to default branch)
+        # - Any other single remote name without '/' could be similar
+        names = []
+        for r in raw:
+            cleaned = strip_branch_marker(r).strip()
+            if cleaned:
+                # WHY: 'git branch --all' includes refs/remotes/origin/HEAD as 'origin'
+                # This is not a real branch, just a pointer to the default remote branch
+                # HOW: Skip entries that look like bare remote names (no slash)
+                # We check against known remote names to avoid filtering legitimate local branches
+                if include_all and '/' not in cleaned and cleaned in ['origin', 'upstream']:
+                    continue
+                names.append(cleaned)
     if include_tags:
         tag_raw = run_git("tag", "--list").splitlines()
         # mark them so they stay distinguishable in the graph
@@ -613,12 +697,45 @@ def parse_args(argv: List[str] | None = None) -> argparse.Namespace:
 
 
 def _name_exists(name: str) -> bool:
-    """Return True if *name* exists as a branch, remote branch, loose ref or tag."""
+    """
+    Return True if *name* exists as a branch, remote branch, loose ref or tag.
+    
+    EDGE CASES HANDLED:
+    1. Remote branches like 'origin/master' should be checked as 'refs/remotes/origin/master'
+    2. Local branches are checked as 'refs/heads/branch-name'
+    3. Tags are checked as 'refs/tags/tag-name'
+    4. The name might already be a full ref or commit SHA
+    
+    WHY THIS FUNCTION NEEDS SPECIAL HANDLING:
+    - Used by --list and --list-file options to validate user-provided branch names
+    - Must handle the same remote branch resolution issues as resolve_name_to_commit
+    - The original code checked refs/remotes/origin/master as refs/heads/origin/master
+    - This caused spurious "fatal: ambiguous argument" errors in stderr
+    
+    HOW IT WORKS:
+    - Detects likely remote branches (contain '/' but aren't already full refs)
+    - Tries refs/remotes/ namespace first for these
+    - Falls back to standard order: local branches, as-is, then tags
+    - Uses _try_git_rev_parse to suppress error messages during checking
+    
+    EXAMPLE RESOLUTION:
+    - 'master' → refs/heads/master (local branch)
+    - 'origin/master' → refs/remotes/origin/master (remote branch)
+    - 'v1.0' → refs/tags/v1.0 (tag)
+    - 'abc123' → abc123 (commit SHA)
+    """
+    # WHY: Names with '/' are likely remote branches (origin/feature)
+    # HOW: Check refs/remotes/ first to avoid checking non-existent refs/heads/origin/feature
+    # This prevents the stderr errors that were confusing users
+    if '/' in name and not name.startswith('refs/'):
+        if _try_git_rev_parse(f"refs/remotes/{name}"):
+            return True
+    
+    # Standard resolution order
     for ref in (
-        f"refs/heads/{name}",
-        f"refs/remotes/{name}",
-        name,                       # already a full ref?
-        f"refs/tags/{name}",
+        f"refs/heads/{name}",       # Local branch
+        name,                       # Already a full ref or commit SHA?
+        f"refs/tags/{name}",        # Git tag
     ):
         if _try_git_rev_parse(ref):
             return True
