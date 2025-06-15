@@ -9,7 +9,7 @@
 # ubertmux command prefix is Ctrl+A (!).
 #
 # This script ensures that you can run a tmux “ubertmux” server with its own custom config,
-# completely isolated from your default tmux environment. By using a separate socket file,
+# completely isolated from your default tmux environment. By using a named socket with -L flag,
 # we guarantee that even if your regular tmux server is already running (or you start it later),
 # ubertmux will use its own settings (e.g. Ctrl+A prefix) and never get “-f ignored” errors.
 #
@@ -20,13 +20,13 @@
 #
 # What we’re doing:
 #   1. Verify that tmux is installed.
-#   2. Define variables for the custom config (~/.ubertmux.conf) and a dedicated socket (/tmp/ubertmux.sock).
+#   2. Define variables for the custom config (~/.ubertmux.conf) and a dedicated socket name.
 #   3. If the config doesn’t exist, create a minimal one that rebinds prefix to Ctrl+A.
 #   4. Check if a tmux server is already listening on our ubertmux socket:
-#        • If the socket file exists but no server is responding, remove the stale socket file.
-#   5. Launch tmux with “-f $UBERCONF -S $UBERSOCK new-session -A -s ubertmux”:
+#        • Check if ubertmux server is already running on the named socket.
+#   5. Launch tmux with “-f $UBERCONF -L $UBERSOCK new-session -A -s ubertmux”:
 #        • “-f” ensures that this new server will load our custom config.
-#        • “-S” points tmux to use a separate socket file, guaranteeing isolation from the default server.
+#        • "-L" creates a named socket in tmux's managed directory, guaranteeing isolation from the default server.
 #        • “new-session -A -s ubertmux” creates or attaches to a session named “ubertmux” on that socket.
 #
 # By the end, you’ll have:
@@ -63,13 +63,11 @@ INFO "✔ tmux found."
 # Path to the custom ubertmux config
 UBERCONF="$HOME/.ubertmux.conf"
 
-# Path to a dedicated socket for the ubertmux server.
-# Use a per-user directory, following tmux's default pattern for multiuser safety.
-# On most systems, tmux uses /tmp/tmux-$(id -u)/default as the default socket.
-# We'll use /tmp/tmux-$(id -u)/ubertmux.sock for ubertmux.
-# If your system uses /run/user/$(id -u)/tmux/default, substitute accordingly.
-UBERSOCK="/tmp/tmux-$(id -u)/ubertmux.sock"
-INFO "Using dedicated socket: $UBERSOCK"
+# Socket name for the ubertmux server.
+# Using -L flag, tmux handles the socket directory automatically
+# (typically /tmp/tmux-UID/ubertmux or under TMUX_TMPDIR if set)
+UBERSOCK="ubertmux"
+INFO "Using dedicated socket name: $UBERSOCK"
 
 #--------------------------------------------------
 # Optional workspace support
@@ -88,12 +86,7 @@ if [[ -n "$WORKSPACE" ]]; then
 fi
 
 INFO "ℹ Ubertmux config will be: $UBERCONF"
-INFO "ℹ Ubertmux socket will be: $UBERSOCK"
-echo
-echo "Note: On some systems, the default tmux socket is at /run/user/\$(id -u)/tmux/default."
-echo "      If you want ubertmux to use that location, edit this script and set:"
-echo "      UBERSOCK=\"/run/user/\$(id -u)/tmux/ubertmux.sock\""
-echo
+INFO "ℹ Ubertmux socket name will be: $UBERSOCK"
 
 ###########################################################
 # 3. Create ~/.ubertmux.conf if it doesn’t already exist  #
@@ -136,23 +129,14 @@ if [[ -n "$WORKSPACE" ]]; then
 fi
 
 ##############################################################
-# 4. Handle stale socket if present but no tmux server alive #
+# 4. Check if ubertmux server is already running #
 ##############################################################
 
-if [[ -S "$UBERSOCK" ]]; then
-    INFO "ℹ Found existing socket file at $UBERSOCK. Checking for a running ubertmux server..."
-
-    # Attempt to list sessions on that socket. If it fails with “connection refused” or “no server running”,
-    # we treat it as a stale socket and remove the file so tmux can recreate it cleanly.
-    if ! tmux -S "$UBERSOCK" ls &>/dev/null; then
-        INFO "⚠ No tmux server responding on $UBERSOCK. Cleaning up stale socket file..."
-        rm -f "$UBERSOCK"
-        INFO "✔ Removed stale socket."
-    else
-        INFO "✔ A tmux server is already running on $UBERSOCK."
-    fi
+# With -L flag, tmux manages socket lifecycle automatically
+if tmux -L "$UBERSOCK" ls &>/dev/null 2>&1; then
+    INFO "✔ A tmux server is already running on socket name: $UBERSOCK"
 else
-    INFO "ℹ No existing ubertmux socket detected. Will create a new server shortly."
+    INFO "ℹ No existing ubertmux server detected. Will create a new server shortly."
 fi
 
 ####################################################
@@ -160,12 +144,12 @@ fi
 ####################################################
 
 INFO "🔧 Starting or attaching to the ubertmux tmux server..."
-INFO "Note: We use '-f $UBERCONF -S $UBERSOCK' to ensure a brand-new server (or attach to the right one)."
+INFO "Note: We use '-f $UBERCONF -L $UBERSOCK' to ensure a brand-new server (or attach to the right one)."
 INFO "This guarantees that your default tmux (on its own socket) will never load ~/.ubertmux.conf."
 echo
 
 # -f  : point to our ubertmux-specific config
-# -S  : use the dedicated socket (so it doesn't collide with default tmux)
+# -L  : use a named socket (so it doesn't collide with default tmux)
 # new-session -A -s ubertmux:
 #        * -s ubertmux names the session “ubertmux”
 #        * -A        tells tmux: “If session exists, attach. Otherwise, create it.”
@@ -176,7 +160,7 @@ if [[ -n "$WORKSPACE" ]]; then
     cd "$WORKSPACE"
 fi
 
-tmux -f "$UBERCONF" -S "$UBERSOCK" new-session -A -s ubertmux
+tmux -f "$UBERCONF" -L "$UBERSOCK" new-session -A -s ubertmux
 
 # If tmux exits unexpectedly, the script will end here.
 #
