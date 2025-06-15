@@ -1,8 +1,12 @@
 #!/bin/bash
 # Generic wrapper script to launch Claude Code with modified git config
-# This script appends "(Claude Code)" to the current git user name
+# This script appends a configurable suffix to the current git user name.
+# Set CLAUDE_SUFFIX environment variable to override, default is "(claude)"
 #
 # To always run calude "wrapped" put this script in some $PATH directory and alias claude=`claude.sh` to your ~/.bashrc
+
+# Configure suffix (default: "(claude)")
+SUFFIX="${CLAUDE_SUFFIX:-"(claude)"}"
 
 # Get current git user config
 CURRENT_NAME=$(git config user.name)
@@ -17,8 +21,8 @@ if [ -z "$CURRENT_NAME" ] || [ -z "$CURRENT_EMAIL" ]; then
 fi
 
 # Set Claude-specific git config using environment variables
-export GIT_AUTHOR_NAME="$CURRENT_NAME (Claude Code)"
-export GIT_COMMITTER_NAME="$CURRENT_NAME (Claude Code)"
+export GIT_AUTHOR_NAME="$CURRENT_NAME $SUFFIX"
+export GIT_COMMITTER_NAME="$CURRENT_NAME $SUFFIX"
 
 # Add +claude suffix to email if it doesn't already have it
 if [[ "$CURRENT_EMAIL" == *"+claude.code"* ]]; then
