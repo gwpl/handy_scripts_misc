@@ -1,0 +1,3 @@
+[submodule "ubertmux_repo"]
+	path = ubertmux_repo
+	url = https://github.com/shibuido/ubertmux.git

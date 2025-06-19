@@ -22,6 +22,32 @@ The **shibuido** organization hosts our most refined tools:
 
 **Think of it as:** shibuido for the polished gems 💎, here for the creative chaos 🎨
 
+## 🔗 **Working with Submodules**
+
+Many tools have graduated to their own repositories under **shibuido** and are included here as git submodules with symbolic links for easy access.
+
+### **First-time Setup:**
+
+```bash
+git clone --depth=1 --recurse-submodules https://github.com/gwpl/handy_scripts_misc.git
+```
+
+### **Updating Everything:**
+
+```bash
+git pull --recurse-submodules
+git submodule update --remote
+```
+
+### **Adding to PATH:**
+
+```bash
+# Add to your ~/.bashrc or ~/.zshrc
+export PATH="$HOME/path/to/handy_scripts_misc:$PATH"
+```
+
+The symbolic links ensure that scripts work exactly as before, while the submodules keep each tool's development independent and focused.
+
 ---
 
 Handy scripts for daily workflows.
