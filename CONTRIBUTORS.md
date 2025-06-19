@@ -151,9 +151,35 @@ git push origin master
 4. **Symbolic Links**: Always maintain symbolic links for backward compatibility
 5. **Documentation**: Keep README.md updated when adding/removing submodules
 
+## 🚀 **Quick Update Tool**
+
+For convenience, we provide an automated script to handle the entire submodule update workflow:
+
+### **Using `update-submodules`**
+
+```bash
+# Update all submodules and commit gitlinks automatically
+./update-submodules
+
+# Preview what would be done without making changes
+./update-submodules --dry-run
+
+# Show help and options
+./update-submodules --help
+```
+
+This script:
+- ✅ Updates all submodules to their latest remote HEAD
+- ✅ Shows which submodules were updated with before/after SHAs
+- ✅ Commits the gitlink changes with a descriptive message
+- ✅ Provides clear status and next steps
+- ✅ Supports dry-run mode for preview
+
+**Perfect for regular maintenance!** Contributors can run this periodically to keep all submodules current.
+
 ## 🎯 **Workflow Summary**
 
-For regular maintenance:
+### **Manual Approach:**
 
 ```bash
 # 1. Update submodules
@@ -171,4 +197,11 @@ git commit -m "feat: update submodules to latest versions"
 git push origin master
 ```
 
-This keeps the repository current with all the latest improvements from the individual tool repositories while maintaining the convenience of the unified access pattern.
+### **Automated Approach:**
+
+```bash
+# One command to rule them all
+./update-submodules
+```
+
+Both approaches keep the repository current with all the latest improvements from the individual tool repositories while maintaining the convenience of the unified access pattern.
