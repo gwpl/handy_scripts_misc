@@ -1,5 +1,46 @@
 # Contributors Guide
 
+## 🔄 **Migrating Tools to Individual Repositories**
+
+When a tool in this repo matures and is ready to move to its own repository under [shibuido](https://github.com/shibuido), follow this migration pattern:
+
+### **Migration Steps:**
+
+1. **Create individual repo** under shibuido organization
+2. **Move tool files** to the new repository  
+3. **Add as submodule** to this repo with `_repo` suffix
+4. **Create symbolic link** for backward compatibility
+5. **Document the migration** in commit message
+
+### **Example Migration (tmuxa):**
+
+```bash
+# 1. Tool has been moved to https://github.com/shibuido/tmuxa.git
+# 2. Add as submodule
+git submodule add https://github.com/shibuido/tmuxa.git tmuxa_repo
+
+# 3. Create symbolic link for seamless access
+ln -s tmuxa_repo/tmuxa tmuxa
+
+# 4. Commit the migration
+git add .
+git commit -m "feat: migrate tmuxa to submodule from shibuido
+
+- Add https://github.com/shibuido/tmuxa.git as submodule
+- Create symbolic link for backward compatibility
+- Tool now has independent development lifecycle
+
+🤖 Generated with Claude Code
+
+Co-Authored-By: Claude <noreply@anthropic.com>"
+```
+
+This pattern ensures:
+- ✅ **Backward compatibility** - existing scripts continue to work
+- ✅ **Independent development** - tool can evolve in its own repo
+- ✅ **Easy access** - users still run `./tmuxa` as before
+- ✅ **Clean organization** - each tool has focused development
+
 ## 🔗 **Working with Submodules**
 
 This repository uses git submodules to include tools that have graduated to their own repositories under the [shibuido](https://github.com/shibuido) organization. As a contributor, you'll need to understand how to maintain these submodules.

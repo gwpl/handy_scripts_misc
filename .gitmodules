@@ -1,3 +1,6 @@
 [submodule "ubertmux_repo"]
 	path = ubertmux_repo
 	url = https://github.com/shibuido/ubertmux.git
+[submodule "tmuxa_repo"]
+	path = tmuxa_repo
+	url = https://github.com/shibuido/tmuxa.git
