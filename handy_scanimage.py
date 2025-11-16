@@ -6,6 +6,23 @@ import time
 from datetime import datetime
 import argparse
 
+def parse_source(value):
+    """Map user-friendly source aliases to canonical scanimage values."""
+    normalized_key = ' '.join(value.strip().lower().split())
+    source_map = {
+        'flatbed': 'Flatbed',
+        'flat': 'Flatbed',
+        'bed': 'Flatbed',
+        'adf': 'ADF',
+        'duplex': 'ADF Duplex',
+        'adf duplex': 'ADF Duplex',
+    }
+    if normalized_key in source_map:
+        return source_map[normalized_key]
+    raise argparse.ArgumentTypeError(
+        f"Invalid source '{value}'. Use one of: Flatbed, ADF, ADF Duplex (aliases: flat, bed, adf, duplex)."
+    )
+
 def scan(basename, file_format, date_option, sane_device, mode, resolution,
          verbose, icc_profile, output_file, progress, all_options,
          extra_args, retries=3, delay=1, source='Flatbed'):
@@ -122,9 +139,10 @@ def main():
                         help='Number of retries if scanimage fails')
     parser.add_argument('--delay', type=int, default=1,
                         help='Delay in seconds between retries')
-    parser.add_argument('-s', '--source', choices=['Flatbed','ADF','ADF Duplex'],
+    parser.add_argument('-s', '--source', type=parse_source,
+                        choices=['Flatbed', 'ADF', 'ADF Duplex'],
                         default='Flatbed',
-                        help='Scan source (Flatbed, ADF, or ADF Duplex)')
+                        help='Scan source (Flatbed, ADF, or ADF Duplex). Aliases: flat, bed, adf, duplex.')
 
     # --batch optional argument
     parser.add_argument('--batch', nargs='?', const=True,
