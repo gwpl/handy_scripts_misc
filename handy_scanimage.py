@@ -188,7 +188,7 @@ def main():
     parser.add_argument('-A', '--all-options', action='store_true',
                         help='List all available backend options')
     parser.add_argument('-V', '--view',
-                        help='Command to view the scanned file(s). '
+                        help='Command to view the scanned file(s) (e.g. `viu`). '
                              'Use {} as a placeholder for the filename.')
     parser.add_argument('--retries', type=int, default=3,
                         help='Number of retries if scanimage fails')
