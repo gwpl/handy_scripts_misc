@@ -3,6 +3,7 @@ import os
 import sys
 import subprocess
 import time
+import re
 from datetime import datetime
 import argparse
 
@@ -22,6 +23,58 @@ def parse_source(value):
     raise argparse.ArgumentTypeError(
         f"Invalid source '{value}'. Use one of: Flatbed, ADF, ADF Duplex (aliases: flat, bed, adf, duplex)."
     )
+
+def list_devices(verbose=False):
+    """Run scanimage -L and parse output into device list."""
+    result = subprocess.run(['scanimage', '-L'], capture_output=True, text=True)
+    devices = []
+    default_device = None
+
+    # Parse device lines from both stdout and stderr
+    for line in result.stdout.splitlines() + result.stderr.splitlines():
+        # Match: device `xxx' is a yyy
+        match = re.match(r"device `([^']+)' is a (.+)", line)
+        if match:
+            devices.append((match.group(1), match.group(2)))
+        # Match: default device is `xxx'
+        default_match = re.match(r"default device is `([^']+)'", line)
+        if default_match:
+            default_device = default_match.group(1)
+
+    return devices, default_device
+
+def select_device_interactive(devices, default_device):
+    """Display numbered list and prompt user to select."""
+    if not devices:
+        print("No scanners found.", file=sys.stderr)
+        return None
+
+    print("\nAvailable scanners:")
+    default_idx = None
+    for i, (dev, desc) in enumerate(devices, 1):
+        prefix = "[DEFAULT] " if dev == default_device else ""
+        if dev == default_device:
+            default_idx = i
+        print(f"  {i}) {prefix}{dev}")
+        print(f"     {desc}")
+
+    prompt = f"\nSelect device [1-{len(devices)}"
+    if default_idx:
+        prompt += f", Enter={default_idx}"
+    prompt += "]: "
+
+    choice = input(prompt).strip()
+    if not choice and default_idx:
+        return devices[default_idx - 1][0]
+    try:
+        idx = int(choice)
+        if 1 <= idx <= len(devices):
+            return devices[idx - 1][0]
+    except ValueError:
+        pass
+
+    print("Invalid selection.", file=sys.stderr)
+    return None
 
 def scan(basename, file_format, date_option, sane_device, mode, resolution,
          verbose, icc_profile, output_file, progress, all_options,
@@ -123,6 +176,8 @@ def main():
     parser.add_argument('-d', '--device-name', default=None,
                         help='SANE device to use (use `scanimage -L` to find one), '
                              'if not provided, env. $SCANIMAGE_DEVICE is used')
+    parser.add_argument('-S', '--select-scanner', action='store_true',
+                        help='Interactively select scanner from numbered list.')
     parser.add_argument('-i', '--icc-profile',
                         help='Include this ICC profile into TIFF file')
     parser.add_argument('-o', '--output-file',
@@ -161,12 +216,22 @@ def main():
                         help='Additional parameters for scanimage after a double-dash (--).')
 
     args = parser.parse_args()
-    
+
+    # Handle -S: interactive scanner selection
+    if args.select_scanner:
+        devices, default_device = list_devices(args.verbose)
+        selected = select_device_interactive(devices, default_device)
+        if selected:
+            args.device_name = selected
+        else:
+            sys.exit(1)
+
     if args.device_name is None:
         args.device_name = os.getenv('SCANIMAGE_DEVICE')
         if args.device_name is None:
             print("ERROR: SANE device not provided. Use `scanimage -L` to find one and "
-                  "provide via `-d` flag or set env variable $SCANIMAGE_DEVICE.", file=sys.stderr)
+                  "provide via `-d` flag, `-S` for interactive selection, or set env "
+                  "variable $SCANIMAGE_DEVICE.", file=sys.stderr)
             sys.exit(1)
 
     # If user selected ADF Duplex or batch-prompt, we want to be in batch mode if not already.
